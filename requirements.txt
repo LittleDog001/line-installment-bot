@@ -2,3 +2,4 @@ Flask
 line-bot-sdk
 promptpay
 gunicorn
+psycopg2-binary
