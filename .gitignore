@@ -1,0 +1,14 @@
+# ไม่ให้ส่งไฟล์ฐานข้อมูล SQLite ขึ้น Git
+database.db
+*.db
+*.sqlite
+
+# ไม่ให้ส่งไฟล์การตั้งค่า/ความลับขึ้น Git
+.env
+config.php
+db.php
+
+# ไม่ให้ส่งโฟลเดอร์ส่วนตัวของ Python ขึ้น Git
+__pycache__/
+*.pyc
+venv/
