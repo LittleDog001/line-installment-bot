@@ -46,6 +46,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 contract_number TEXT UNIQUE NOT NULL,
                 customer_name TEXT NOT NULL,
+                id_card TEXT,
                 phone TEXT NOT NULL,
                 line_user_id TEXT,
                 product_name TEXT NOT NULL,
@@ -57,6 +58,13 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # ตรวจสอบว่าคอลัมน์ id_card มีอยู่ในฐานข้อมูลเก่าหรือยัง ถ้ายังไม่มีให้เพิ่มอัตโนมัติ
+        cursor.execute("PRAGMA table_info(contracts)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'id_card' not in columns:
+            cursor.execute("ALTER TABLE contracts ADD COLUMN id_card TEXT")
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

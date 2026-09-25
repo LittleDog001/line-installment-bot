@@ -8,10 +8,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Sarabun', sans-serif; background-color: #f4f6f9; color: #000; }
-        .contract-box { max-width: 800px; margin: 20px auto; background: #fff; padding: 50px; border: 1px solid #ccc; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .contract-box { max-width: 800px; margin: 30px auto; background: #fff; padding: 50px; border: 1px solid #ccc; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
         .contract-title { font-size: 22px; font-weight: bold; text-align: center; margin-bottom: 25px; }
         .text-indent { text-indent: 40px; }
-        p { line-height: 1.8; font-size: 15px; margin-bottom: 10px; }
+        p { line-height: 1.8; font-size: 15px; margin-bottom: 12px; }
         @media print {
             body { background: #fff; }
             .contract-box { border: none; box-shadow: none; padding: 0; margin: 0; width: 100%; max-width: 100%; }
@@ -26,12 +26,12 @@
     
     <div class="text-end mb-4">
         <strong>เลขที่สัญญา:</strong> {{ c.contract_number }}<br>
-        <strong>ทำขึ้น ณ วันที่:</strong> {{ c.created_at[:10] if c.created_at else '-' }}
+        <strong>วันทำสัญญา:</strong> {{ c.created_at[:10] if c.created_at else '-' }}
     </div>
 
     <p class="text-indent">
         สัญญาฉบับนี้ทำขึ้นระหว่าง <strong>ร้านบริการผ่อนสินค้ามือถือ</strong> (ซึ่งต่อไปในสัญญานี้จะเรียกว่า "ผู้ให้เช่าซื้อ") ฝ่ายหนึ่ง 
-        กับ <strong>{{ c.customer_name }}</strong> เบอร์โทรศัพท์ <strong>{{ c.phone }}</strong> (ซึ่งต่อไปในสัญญานี้จะเรียกว่า "ผู้เช่าซื้อ") อีกฝ่ายหนึ่ง ทั้งสองฝ่ายตกลงทำสัญญากันมีข้อความดังต่อไปนี้:
+        กับ <strong>{{ c.customer_name }}</strong> เลขประจำตัวประชาชน <strong>{{ c.id_card if c.id_card else '-' }}</strong> เบอร์โทรศัพท์ <strong>{{ c.phone }}</strong> (ซึ่งต่อไปในสัญญานี้จะเรียกว่า "ผู้เช่าซื้อ") อีกฝ่ายหนึ่ง ทั้งสองฝ่ายตกลงทำสัญญากันมีข้อความดังต่อไปนี้:
     </p>
 
     <p class="text-indent">
@@ -41,7 +41,7 @@
     <p class="text-indent">
         <strong>ข้อ 2. ราคาสินค้าและการชำระเงิน:</strong> ผู้เช่าซื้อตกลงชำระเงินค่าเช่าซื้อเป็นจำนวนเงินรวมทั้งสิ้น <strong>฿{{ "{:,.2f}".format(c.total_amount) }} บาท</strong> 
         โดยแบ่งชำระเป็นรายเดือน รวมทั้งสิ้น <strong>{{ c.total_installments }} งวด</strong> งวดละ <strong>฿{{ "{:,.2f}".format(c.monthly_amount) }} บาท</strong> 
-        กำหนดชำระทุกวันที่ 1-5 ของทุกเดือน
+        กำหนดชำระทุกวันที่ 1-5 ของทุกเดือน หากผู้เช่าซื้อชำระล่าช้าเกินกำหนด ผู้เช่าซื้อตกลงชำระค่าปรับเป็นจำนวน 100 บาทต่อวัน
     </p>
 
     <p class="text-indent">
@@ -52,7 +52,6 @@
         สัญญาฉบับนี้ทำขึ้นสองฉบับมีข้อความถูกต้องตรงกัน คู่สัญญาได้อ่านและเข้าใจข้อความโดยละเอียดตลอดแล้ว จึงได้ลงลายมือชื่อไว้เป็นหลักฐานต่อหน้าพยาน
     </p>
 
-    <!-- ลายเซ็น -->
     <div class="row text-center mt-5 pt-4">
         <div class="col-6">
             <p>ลงชื่อ..........................................................ผู้เช่าซื้อ</p>
@@ -75,10 +74,9 @@
         </div>
     </div>
 
-    <!-- ปุ่มพิมพ์ -->
     <div class="text-center mt-5 no-print">
-        <button onclick="window.print()" class="btn btn-primary btn-lg fw-bold px-4 me-2">🖨️ พิมพ์หนังสือสัญญา (A4)</button>
-        <button onclick="window.close()" class="btn btn-secondary btn-lg px-4">ปิดหน้าต่าง</button>
+        <button onclick="window.print()" class="btn btn-primary btn-lg fw-bold me-2"><i class="fa-solid fa-print me-1"></i> พิมพ์หนังสือสัญญา (A4)</button>
+        <button onclick="window.close()" class="btn btn-secondary btn-lg">ปิดหน้าต่าง</button>
     </div>
 </div>
 

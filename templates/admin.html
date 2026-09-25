@@ -95,6 +95,10 @@
                             <input type="text" id="customer_name" class="form-control" placeholder="เช่น สมชาย ใจดี" required>
                         </div>
                         <div class="mb-2">
+                            <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
+                            <input type="text" id="id_card" class="form-control" maxlength="13" placeholder="เช่น 1100200300400" required>
+                        </div>
+                        <div class="mb-2">
                             <label class="form-label small text-muted">เบอร์โทรศัพท์ (ตรงกับ LINE)</label>
                             <input type="text" id="phone_number" class="form-control" placeholder="เช่น 0812345678" required>
                         </div>
@@ -170,6 +174,10 @@
                             <input type="text" id="edit_customer_name" class="form-control" required>
                         </div>
                         <div class="mb-2">
+                            <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
+                            <input type="text" id="edit_id_card" class="form-control" maxlength="13" required>
+                        </div>
+                        <div class="mb-2">
                             <label class="form-label small text-muted">เบอร์โทรศัพท์</label>
                             <input type="text" id="edit_phone_number" class="form-control" required>
                         </div>
@@ -233,6 +241,7 @@
             const data = {
                 contract_number: document.getElementById('contract_number').value,
                 customer_name: document.getElementById('customer_name').value,
+                id_card: document.getElementById('id_card').value,
                 phone_number: document.getElementById('phone_number').value,
                 phone_model: document.getElementById('phone_model').value,
                 total_amount: document.getElementById('total_amount').value,
@@ -274,6 +283,7 @@
                     const monthly = c.monthly_amount !== undefined ? c.monthly_amount : (c.monthly_payment || 0);
                     const phone = c.phone || c.phone_number || '';
                     const productName = c.product_name || c.phone_model || '';
+                    const idCard = c.id_card ? ` (ปชช: ${c.id_card})` : '';
 
                     totalPaid += ((c.paid_installments || 0) * monthly);
 
@@ -282,7 +292,7 @@
                         <td>
                             <strong class="text-primary">${c.contract_number}</strong><br>
                             <span class="small fw-bold">${c.customer_name}</span><br>
-                            <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>${phone}</small>
+                            <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>${phone}${idCard}</small>
                         </td>
                         <td>
                             <span class="fw-semibold">${productName}</span><br>
@@ -348,6 +358,7 @@
                 document.getElementById('edit_id').value = c.id;
                 document.getElementById('edit_contract_number').value = c.contract_number || '';
                 document.getElementById('edit_customer_name').value = c.customer_name || '';
+                document.getElementById('edit_id_card').value = c.id_card || '';
                 document.getElementById('edit_phone_number').value = c.phone || c.phone_number || '';
                 document.getElementById('edit_phone_model').value = c.product_name || c.phone_model || '';
                 document.getElementById('edit_total_amount').value = c.total_amount || 0;
@@ -366,6 +377,7 @@
             const data = {
                 contract_number: document.getElementById('edit_contract_number').value,
                 customer_name: document.getElementById('edit_customer_name').value,
+                id_card: document.getElementById('edit_id_card').value,
                 phone_number: document.getElementById('edit_phone_number').value,
                 phone_model: document.getElementById('edit_phone_model').value,
                 total_amount: document.getElementById('edit_total_amount').value,
