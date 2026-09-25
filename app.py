@@ -93,6 +93,19 @@ def view_bill(payment_id):
 
     return render_template('bill.html', p=payment)
 
+# --- Route แสดงหนังสือสัญญา (Contract Document) ---
+@app.route('/contract/doc/<contract_number>')
+def view_contract_doc(contract_number):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM contracts WHERE contract_number = ?", (contract_number,))
+        contract = cursor.fetchone()
+
+    if not contract:
+        return "ไม่พบข้อมูลสัญญา", 404
+
+    return render_template('contract_document.html', c=contract)
+
 # --- PromptPay Payload Generator ---
 def crc16(data: str) -> str:
     crc = 0xFFFF
@@ -218,6 +231,7 @@ def handle_text_message(event):
         remain_amt = (total - paid) * monthly
 
         if user_text in ["สัญญา", "เช็คค่างวด", "ข้อมูลสัญญา", "ค่างวด"]:
+            doc_url = f"{base_url}/contract/doc/{c_num}"
             flex_content = {
                 "type": "bubble",
                 "body": {
@@ -239,7 +253,8 @@ def handle_text_message(event):
                     "type": "box", "layout": "vertical", "spacing": "sm",
                     "contents": [
                         {"type": "button", "style": "primary", "color": "#1DB446", "action": {"type": "message", "label": "💳 จ่ายค่างวดเดือนนี้", "text": "จ่ายค่างวด"}},
-                        {"type": "button", "style": "secondary", "action": {"type": "message", "label": "📄 ดูใบเสร็จล่าสุด", "text": "ใบเสร็จ"}}
+                        {"type": "button", "style": "secondary", "action": {"type": "message", "label": "📄 ดูใบเสร็จล่าสุด", "text": "ใบเสร็จ"}},
+                        {"type": "button", "style": "link", "action": {"type": "uri", "label": "📜 ดูหนังสือสัญญาฉบับเต็ม", "uri": doc_url}}
                     ]
                 }
             }
