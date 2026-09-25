@@ -1,7 +1,6 @@
 Flask==3.0.2
 line-bot-sdk==3.8.0
-qrencode==1.2
 qrcode==7.4.2
-pillow==10.2.0
+Pillow>=10.0.0
 python-dotenv==1.0.1
 gunicorn==21.2.0
