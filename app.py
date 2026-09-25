@@ -1,80 +1,78 @@
-import base64
-import io
 import os
 import sqlite3
-from flask import Flask, jsonify, render_template, request, send_file
+import io
+from flask import Flask, request, abort, render_template, jsonify, send_file
+import qrcode
+
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
-    ApiClient,
     Configuration,
-    FlexBubble,
-    FlexContainer,
-    FlexMessage,
+    ApiClient,
     MessagingApi,
     ReplyMessageRequest,
     TextMessage,
+    ImageMessage,
+    FlexMessage,
+    FlexContainer
 )
-from linebot.v3.webhooks import FollowEvent, MessageEvent, TextMessageContent
-import qrcode
+from linebot.v3.webhooks import MessageEvent, TextMessageContent
+
+from admin_routes import admin_bp
 
 app = Flask(__name__)
 
-# ตั้งค่า LINE Access Token และ Secret (ใส่ค่าจริงในไฟล์ .env)
+# Register Admin Routes
+app.register_blueprint(admin_bp)
+
+# Config Env
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "YOUR_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "YOUR_CHANNEL_SECRET")
-PROMPTPAY_ID = os.getenv("PROMPTPAY_ID", "0812345678")  # เบอร์พร้อมเพย์หรือเลขบัตรประชาชนของร้าน
+PROMPTPAY_ID = os.getenv("PROMPTPAY_ID", "0812345678")
 
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 DATABASE = "database.db"
 
-
 def get_db():
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
 
-
 def init_db():
     with get_db() as conn:
-        conn.execute(
-            """
+        cursor = conn.cursor()
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS contracts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                contract_no TEXT UNIQUE NOT NULL,
+                contract_number TEXT UNIQUE NOT NULL,
                 customer_name TEXT NOT NULL,
                 phone TEXT NOT NULL,
+                line_user_id TEXT,
                 product_name TEXT NOT NULL,
-                total_price REAL NOT NULL,
-                price_per_month REAL NOT NULL,
-                total_months INTEGER NOT NULL,
-                paid_months INTEGER DEFAULT 0,
+                total_amount REAL NOT NULL,
+                monthly_amount REAL NOT NULL,
+                total_installments INTEGER NOT NULL,
+                paid_installments INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'ACTIVE',
-                line_user_id TEXT
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
-        conn.execute(
-            """
+        ''')
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                contract_id INTEGER NOT NULL,
-                month_no INTEGER NOT NULL,
+                contract_number TEXT NOT NULL,
                 amount REAL NOT NULL,
-                paid_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (contract_id) REFERENCES contracts (id)
+                installment_no INTEGER NOT NULL,
+                paid_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
+        ''')
         conn.commit()
-
 
 init_db()
 
-
-# === ฟังก์ชันสร้าง PromptPay QR Code ===
+# --- PromptPay Payload Generator ---
 def crc16(data: str) -> str:
     crc = 0xFFFF
     for char in data:
@@ -87,348 +85,194 @@ def crc16(data: str) -> str:
             crc &= 0xFFFF
     return f"{crc:04X}"
 
-
 def generate_promptpay_payload(target: str, amount: float = 0.0) -> str:
     target = target.replace("-", "").strip()
-    if len(target) == 10:  # Phone
+    if len(target) == 10 and target.startswith("0"):
         target_formatted = "0066" + target[1:]
-        target_type = "0112"
-    elif len(target) == 13:  # ID Card
-        target_formatted = target
-        target_type = "0213"
+        target_tag = "01"
     else:
-        raise ValueError("Invalid PromptPay ID")
-
+        target_formatted = target
+        target_tag = "02"
+    
+    target_len = f"{len(target_formatted):02d}"
+    merchant_info = f"0016A000000677010111{target_tag}{target_len}{target_formatted}"
+    
     payload = "000201010212"
-    merchant_info = f"0016A000000677010111{target_type}{target_formatted}"
     payload += f"29{len(merchant_info):02d}{merchant_info}"
-    payload += "5303764"  # THB
-
+    payload += "5303764" # THB
+    
     if amount > 0:
         amt_str = f"{amount:.2f}"
         payload += f"54{len(amt_str):02d}{amt_str}"
-
-    payload += "5802TH"
-    payload += "6304"
+        
+    payload += "5802TH5907PAYMENT6007BANGKOK6304"
     payload += crc16(payload)
     return payload
 
+# --- Dynamic QR Code Image Route ---
+@app.route("/qrcode/<contract_number>/<type_pay>")
+def generate_qr_image(contract_number, type_pay):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM contracts WHERE contract_number = ?", (contract_number,))
+        contract = cursor.fetchone()
+        
+    if not contract:
+        abort(404)
+        
+    paid = contract["paid_installments"]
+    total = contract["total_installments"]
+    monthly = contract["monthly_amount"]
+    
+    if type_pay == "full":
+        remaining_installments = total - paid
+        amount = remaining_installments * monthly
+    else:
+        amount = monthly
+        
+    payload = generate_promptpay_payload(PROMPTPAY_ID, amount)
+    
+    img = qrcode.make(payload)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png")
 
-# === LINE Webhook Route ===
-@app.route("/callback", methods=["POST"])
+# --- LINE Bot Webhook ---
+@app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers.get("X-Line-Signature", "")
+    signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
-
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        return "Invalid signature", 400
-    return "OK", 200
-
+        abort(400)
+    return 'OK'
 
 @handler.add(MessageEvent, message=TextMessageContent)
-def handle_message(event):
+def handle_text_message(event):
     user_id = event.source.user_id
-    text = event.message.text.strip()
-
+    user_text = event.message.text.strip()
+    
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
+        
+        # Check binding by Phone Number
+        if user_text.isdigit() and len(user_text) >= 9:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM contracts WHERE phone = ?", (user_text,))
+                contracts = cursor.fetchall()
+                
+                if contracts:
+                    cursor.execute("UPDATE contracts SET line_user_id = ? WHERE phone = ?", (user_id, user_text))
+                    conn.commit()
+                    msg = f"✅ ผูกบัญชีสำเร็จเรียบร้อยแล้วครับ!\nพบข้อมูลสัญญา {len(contracts)} รายการ\n\nพิมพ์ 'สัญญา' หรือ 'เช็คค่างวด' เพื่อดูรายละเอียดได้เลยครับ"
+                else:
+                    msg = f"❌ ไม่พบข้อมูลสัญญาที่ลงทะเบียนด้วยเบอร์ {user_text}\nกรุณาตรวจสอบเบอร์โทรศัพท์อีกครั้ง หรือติดต่อแอดมินครับ"
+                    
+            line_bot_api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=msg)]
+            ))
+            return
 
+        # Fetch contract bound to line_user_id
         with get_db() as conn:
             cursor = conn.cursor()
-
-            # สแกน/ค้นหาด้วยเบอร์ หรือ เลขสัญญา
-            cursor.execute(
-                "SELECT * FROM contracts WHERE (phone = ? OR contract_no = ?) AND status = 'ACTIVE'",
-                (text, text),
-            )
+            cursor.execute("SELECT * FROM contracts WHERE line_user_id = ? AND status = 'ACTIVE' ORDER BY id DESC", (user_id,))
             contract = cursor.fetchone()
 
-            if contract:
-                # ผูก line_user_id เข้ากับสัญญา
-                cursor.execute(
-                    "UPDATE contracts SET line_user_id = ? WHERE id = ?",
-                    (user_id, contract["id"]),
-                )
-                conn.commit()
+        if not contract:
+            reply_txt = "👋 ยินดีต้อนรับสู่ระบบบริการผ่อนชำระครับ\n\nกรุณาพิมพ์ **เบอร์โทรศัพท์** ที่ใช้ทำสัญญา เพื่อเริ่มต้นผูกบัญชีเข้ากับ LINE ครับ"
+            line_bot_api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=reply_txt)]
+            ))
+            return
 
-                reply_flex = create_contract_flex(contract)
-                line_bot_api.reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token, messages=[reply_flex]
-                    )
-                )
-                return
+        # Commands handling
+        base_url = request.host_url.rstrip('/')
+        c_num = contract["contract_number"]
+        paid = contract["paid_installments"]
+        total = contract["total_installments"]
+        monthly = contract["monthly_amount"]
+        remain_amt = (total - paid) * monthly
 
-            # ค้นหาสัญญาที่ผูกไว้กับ user_id นี้
-            cursor.execute(
-                "SELECT * FROM contracts WHERE line_user_id = ? AND status = 'ACTIVE'",
-                (user_id,),
-            )
-            my_contract = cursor.fetchone()
-
-            if text in ["เช็คสัญญา", "ดูสัญญา", "สัญญาของฉัน"]:
-                if my_contract:
-                    reply_flex = create_contract_flex(my_contract)
-                    line_bot_api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=event.reply_token, messages=[reply_flex]
-                        )
-                    )
-                else:
-                    line_bot_api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=event.reply_token,
-                            messages=[
-                                TextMessage(
-                                    text="❌ ไม่พบสัญญาที่ผูกไว้ กรุณาพิมพ์ 'เบอร์โทรศัพท์' หรือ 'เลขที่สัญญา' เพื่อลงทะเบียนครับ"
-                                )
-                            ],
-                        )
-                    )
-
-            elif text in ["ชำระเงิน", "จ่ายค่างวด"]:
-                if my_contract:
-                    amount = my_contract["price_per_month"]
-                    qr_payload = generate_promptpay_payload(PROMPTPAY_ID, amount)
-
-                    # สร้าง QR Code Image Base64
-                    qr = qrcode.QRCode(box_size=10, border=2)
-                    qr.add_data(qr_payload)
-                    qr.make(fit=True)
-                    img = qr.make_image(fill_color="black", back_color="white")
-
-                    buffered = io.BytesIO()
-                    img.save(buffered, format="PNG")
-                    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-                    msg = TextMessage(
-                        text=f"📱 **QR Code ชำระค่างวด**\n"
-                        f"สัญญา: {my_contract['contract_no']}\n"
-                        f"งวดที่: {my_contract['paid_months'] + 1}/{my_contract['total_months']}\n"
-                        f"ยอดชำระ: {amount:,.2f} บาท\n\n"
-                        f"โอนแล้วส่งสลิปแจ้งแอดมินได้เลยครับ!"
-                    )
-                    line_bot_api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=event.reply_token, messages=[msg]
-                        )
-                    )
-                else:
-                    line_bot_api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=event.reply_token,
-                            messages=[
-                                TextMessage(
-                                    text="❌ กรุณาพิมพ์ 'เบอร์โทร' เพื่อระบุสัญญาก่อนทำรายการครับ"
-                                )
-                            ],
-                        )
-                    )
-
-            elif text in ["ปิดยอด", "ปิดสัญญา"]:
-                if my_contract:
-                    remaining_months = (
-                        my_contract["total_months"] - my_contract["paid_months"]
-                    )
-                    payoff_amount = remaining_months * my_contract["price_per_month"]
-
-                    msg = TextMessage(
-                        text=f"💰 **รายละเอียดการปิดยอดสัญญา**\n"
-                        f"สัญญา: {my_contract['contract_no']}\n"
-                        f"คุณผ่อนไปแล้ว: {my_contract['paid_months']}/{my_contract['total_months']} งวด\n"
-                        f"คงเหลืออีก: {remaining_months} งวด\n"
-                        f"----------------------------------\n"
-                        f"🔥 **ยอดปิดสัญญาชำระทั้งหมด: {payoff_amount:,.2f} บาท**\n\n"
-                        f"หากต้องการปิดยอด กรุณาติดต่อแอดมินเพื่อยืนยันอีกครั้งครับ"
-                    )
-                    line_bot_api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=event.reply_token, messages=[msg]
-                        )
-                    )
-                else:
-                    line_bot_api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=event.reply_token,
-                            messages=[
-                                TextMessage(
-                                    text="❌ กรุณาพิมพ์ 'เบอร์โทร' เพื่อระบุสัญญาก่อนครับ"
-                                )
-                            ],
-                        )
-                    )
-
-            else:
-                line_bot_api.reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[
-                            TextMessage(
-                                text="ยินดีต้อนรับครับ! พิมพ์ 'เบอร์โทร' หรือ 'เลขที่สัญญา' เพื่อเช็คข้อมูลสัญญาได้เลยครับ"
-                            )
-                        ],
-                    )
-                )
-
-
-def create_contract_flex(c):
-    flex_json = {
-        "type": "bubble",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
-            "backgroundColor": "#0d6efd",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": "📱 สัญญาผ่อนชำระโทรศัพท์",
-                    "color": "#ffffff",
-                    "weight": "bold",
-                    "size": "lg",
-                }
-            ],
-        },
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": f"เลขที่สัญญา: {c['contract_no']}",
-                    "weight": "bold",
-                    "size": "md",
-                },
-                {"type": "text", "text": f"ชื่อลูกค้า: {c['customer_name']}"},
-                {"type": "text", "text": f"สินค้า: {c['product_name']}"},
-                {"type": "separator", "margin": "md"},
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "margin": "md",
+        if user_text in ["สัญญา", "เช็คค่างวด", "ข้อมูลสัญญา", "ค่างวด"]:
+            flex_content = {
+                "type": "bubble",
+                "body": {
+                    "type": "box", "layout": "vertical",
                     "contents": [
-                        {
-                            "type": "text",
-                            "text": f"ผ่อนงวดละ: {c['price_per_month']:,.2f} บาท",
-                            "color": "#198754",
-                            "weight": "bold",
-                        },
-                        {
-                            "type": "text",
-                            "text": f"งวดปัจจุบัน: {c['paid_months']}/{c['total_months']} งวด",
-                            "color": "#0d6efd",
-                        },
-                        {
-                            "type": "text",
-                            "text": f"ราคาทั้งหมด: {c['total_price']:,.2f} บาท",
-                            "size": "sm",
-                            "color": "#6c757d",
-                        },
-                    ],
+                        {"type": "text", "text": "📱 ข้อมูลสัญญาผ่อนชำระ", "weight": "bold", "size": "xl", "color": "#1DB446"},
+                        {"type": "separator", "margin": "md"},
+                        {"type": "box", "layout": "vertical", "margin": "lg", "spacing": "sm", "contents": [
+                            {"type": "box", "layout": "baseline", "contents": [{"type": "text", "text": "เลขสัญญา", "color": "#aaaaaa", "size": "sm"}, {"type": "text", "text": c_num, "align": "end", "weight": "bold", "size": "sm"}]},
+                            {"type": "box", "layout": "baseline", "contents": [{"type": "text", "text": "ผู้เช่าซื้อ", "color": "#aaaaaa", "size": "sm"}, {"type": "text", "text": contract["customer_name"], "align": "end", "size": "sm"}]},
+                            {"type": "box", "layout": "baseline", "contents": [{"type": "text", "text": "สินค้า", "color": "#aaaaaa", "size": "sm"}, {"type": "text", "text": contract["product_name"], "align": "end", "weight": "bold", "size": "sm"}]},
+                            {"type": "box", "layout": "baseline", "contents": [{"type": "text", "text": "ค่างวดต่อเดือน", "color": "#aaaaaa", "size": "sm"}, {"type": "text", "text": f"{monthly:,.2f} บาท", "align": "end", "color": "#1DB446", "weight": "bold", "size": "sm"}]},
+                            {"type": "box", "layout": "baseline", "contents": [{"type": "text", "text": "งวดที่ชำระแล้ว", "color": "#aaaaaa", "size": "sm"}, {"type": "text", "text": f"{paid} / {total} งวด", "align": "end", "weight": "bold", "size": "sm"}]},
+                            {"type": "box", "layout": "baseline", "contents": [{"type": "text", "text": "คงเหลือปิดบัญชี", "color": "#aaaaaa", "size": "sm"}, {"type": "text", "text": f"{remain_amt:,.2f} บาท", "align": "end", "color": "#de350b", "weight": "bold", "size": "sm"}]}
+                        ]}
+                    ]
                 },
-            ],
-        },
-        "footer": {
-            "type": "box",
-            "layout": "horizontal",
-            "spacing": "sm",
-            "contents": [
-                {
-                    "type": "button",
-                    "style": "primary",
-                    "color": "#198754",
-                    "action": {
-                        "type": "message",
-                        "label": "ชำระค่างวด",
-                        "text": "ชำระเงิน",
-                    },
-                },
-                {
-                    "type": "button",
-                    "style": "secondary",
-                    "action": {
-                        "type": "message",
-                        "label": "คำนวณปิดยอด",
-                        "text": "ปิดยอด",
-                    },
-                },
-            ],
-        },
-    }
-    return FlexMessage(alt_text="รายละเอียดสัญญาของคุณ", contents=FlexContainer.from_dict(flex_json))
+                "footer": {
+                    "type": "box", "layout": "vertical", "spacing": "sm",
+                    "contents": [
+                        {"type": "button", "style": "primary", "color": "#1DB446", "action": {"type": "message", "label": "💳 จ่ายค่างวดเดือนนี้", "text": "จ่ายค่างวด"}},
+                        {"type": "button", "style": "secondary", "action": {"type": "message", "label": "🔥 ชำระปิดบัญชีทั้งหมด", "text": "ปิดบัญชี"}}
+                    ]
+                }
+            }
+            line_bot_api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[FlexMessage(alt_text="ข้อมูลสัญญาผ่อนชำระ", contents=FlexContainer.from_dict(flex_content))]
+            ))
 
+        elif user_text in ["จ่ายค่างวด", "ชำระเงิน", "ขอ QR", "จ่ายเงิน"]:
+            if paid >= total:
+                line_bot_api.reply_message(ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="🎉 สัญญานี้ผ่อนชำระครบทุกงวดเรียบร้อยแล้วครับ ขอบคุณครับ!")]
+                ))
+                return
+                
+            qr_url = f"{base_url}/qrcode/{c_num}/monthly"
+            caption = f"ค่างวดประจำเดือน สัญญา {c_num}\nยอดชำระ: {monthly:,.2f} บาท\nสแกนผ่านแอปธนาคารได้ทันทีครับ"
+            
+            line_bot_api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[
+                    TextMessage(text=caption),
+                    ImageMessage(original_content_url=qr_url, preview_image_url=qr_url)
+                ]
+            ))
 
-# === Admin UI Dashboard Routes ===
-@app.route("/admin")
-def admin_page():
-    return render_template("admin.html")
+        elif user_text in ["ปิดบัญชี", "จ่ายทั้งหมด"]:
+            if paid >= total:
+                line_bot_api.reply_message(ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="🎉 สัญญานี้ผ่อนชำระครบทุกงวดเรียบร้อยแล้วครับ")]
+                ))
+                return
+                
+            qr_url = f"{base_url}/qrcode/{c_num}/full"
+            caption = f"🔥 สแกนชำระปิดบัญชีทั้งหมด สัญญา {c_num}\nคงเหลือ {total - paid} งวด\nยอดชำระสุทธิ: {remain_amt:,.2f} บาท"
+            
+            line_bot_api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[
+                    TextMessage(text=caption),
+                    ImageMessage(original_content_url=qr_url, preview_image_url=qr_url)
+                ]
+            ))
 
-
-@app.route("/api/contracts", methods=["GET"])
-def api_get_contracts():
-    search = request.args.get("search", "")
-    with get_db() as conn:
-        cursor = conn.cursor()
-        if search:
-            q = f"%{search}%"
-            cursor.execute(
-                "SELECT * FROM contracts WHERE contract_no LIKE ? OR customer_name LIKE ? OR phone LIKE ?",
-                (q, q, q),
-            )
         else:
-            cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
-        rows = [dict(row) for row in cursor.fetchall()]
-    return jsonify(rows)
-
-
-@app.route("/api/contracts", methods=["POST"])
-def api_add_contract():
-    data = request.json
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO contracts (contract_no, customer_name, phone, product_name, total_price, price_per_month, total_months)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                data["contract_no"],
-                data["customer_name"],
-                data["phone"],
-                data["product_name"],
-                float(data["total_price"]),
-                float(data["price_per_month"]),
-                int(data["total_months"]),
-            ),
-        )
-        conn.commit()
-    return jsonify({"success": True})
-
-
-@app.route("/api/contracts/<int:cid>/update_paid", methods=["POST"])
-def api_update_paid(cid):
-    data = request.json
-    new_paid = int(data["paid_months"])
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE contracts SET paid_months = ? WHERE id = ?", (new_paid, cid)
-        )
-        conn.commit()
-    return jsonify({"success": True})
-
-
-@app.route("/api/contracts/<int:cid>/cancel", methods=["POST"])
-def api_cancel_contract(cid):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE contracts SET status = 'CANCELLED' WHERE id = ?", (cid,)
-        )
-        conn.commit()
-    return jsonify({"success": True})
-
+            line_bot_api.reply_message(ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text="สามารถพิมพ์คำสั่งต่อไปนี้ได้ครับ:\n- 'สัญญา' เพื่อดูรายละเอียด\n- 'จ่ายค่างวด' เพื่อขอ QR Code สแกนจ่าย\n- 'ปิดบัญชี' เพื่อจ่ายยอดที่เหลือทั้งหมด")]
+            ))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
