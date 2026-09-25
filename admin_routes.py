@@ -1,11 +1,11 @@
 import sqlite3
 import datetime
-import pytz
+from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
 
 admin_bp = Blueprint('admin', __name__)
 DATABASE = 'database.db'
-TH_TZ = pytz.timezone('Asia/Bangkok')
+TH_TZ = ZoneInfo('Asia/Bangkok')
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
@@ -50,7 +50,6 @@ def create_contract():
     total_installments = int(request.form.get('total_installments'))
     installment_amount = total_amount / total_installments
 
-    # เวลาปัจจุบันไทย
     contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
 
     with get_db() as conn:
@@ -74,7 +73,6 @@ def create_contract():
 
 @admin_bp.route('/payment/<int:payment_id>/confirm', methods=['POST'])
 def confirm_payment(payment_id):
-    # บันทึกเวลาชำระเงินตรงกับเวลาจริงประเทศไทย
     now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
     
     with get_db() as conn:
@@ -95,7 +93,6 @@ def confirm_payment(payment_id):
 
 @admin_bp.route('/contract/<int:contract_id>/close_early', methods=['POST'])
 def close_contract_early(contract_id):
-    # บันทึกเวลาชำระเงินตรงกับเวลาจริงประเทศไทย
     now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
     
     with get_db() as conn:

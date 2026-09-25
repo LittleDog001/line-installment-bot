@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import datetime
-import pytz
+from zoneinfo import ZoneInfo
 from flask import Flask, request, abort, render_template, jsonify
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -12,8 +12,8 @@ import promptpay
 
 app = Flask(__name__)
 
-# ตั้งค่า Timezone ประเทศไทย
-TH_TZ = pytz.timezone('Asia/Bangkok')
+# ตั้งค่า Timezone ประเทศไทย (ใช้ zoneinfo ที่ built-in มากับ Python)
+TH_TZ = ZoneInfo('Asia/Bangkok')
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
@@ -294,7 +294,6 @@ def send_early_close_qr(user_id, reply_token):
         )
 
 def process_user_close_early(user_id, reply_token):
-    # ปรับใช้เวลาจริงประเทศไทย
     now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
     
     with get_db() as conn:
