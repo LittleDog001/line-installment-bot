@@ -1,108 +1,146 @@
+from flask import Blueprint, render_template, request, jsonify
 import sqlite3
-from flask import Blueprint, request, render_template, jsonify
+import datetime
 
 admin_bp = Blueprint('admin', __name__)
-DATABASE = "database.db"
 
-def get_db():
-    conn = sqlite3.connect(DATABASE)
+def get_db_connection():
+    conn = sqlite3.connect('database.db')
     conn.row_factory = sqlite3.Row
     return conn
 
-# --- Admin Page UI ---
-@admin_bp.route("/admin")
+@admin_bp.route('/admin')
 def admin_page():
-    return render_template("admin.html")
+    return render_template('admin.html')
 
-# --- Admin APIs ---
-@admin_bp.route("/api/contracts", methods=["GET"])
+@admin_bp.route('/api/contracts', methods=['GET'])
 def get_contracts():
-    search = request.args.get("search", "")
-    with get_db() as conn:
-        cursor = conn.cursor()
-        if search:
-            query = "%" + search + "%"
-            cursor.execute("""
-                SELECT * FROM contracts 
-                WHERE contract_number LIKE ? OR customer_name LIKE ? OR phone LIKE ? 
-                ORDER BY id DESC
-            """, (query, query, query))
-        else:
-            cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
-        rows = cursor.fetchall()
-        return jsonify([dict(r) for r in rows])
+    conn = get_db_connection()
+    contracts = conn.execute('SELECT * FROM contracts ORDER BY id DESC').fetchall()
+    conn.close()
+    return jsonify([dict(row) for row in contracts])
 
-@admin_bp.route("/api/contracts", methods=["POST"])
+@admin_bp.route('/api/contracts', methods=['POST'])
 def add_contract():
     data = request.json
+    conn = get_db_connection()
     try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO contracts 
-                (contract_number, customer_name, phone, product_name, total_amount, monthly_amount, total_installments, paid_installments)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                data["contract_number"],
-                data["customer_name"],
-                data["phone"],
-                data["product_name"],
-                float(data["total_amount"]),
-                float(data["monthly_amount"]),
-                int(data["total_installments"]),
-                int(data.get("paid_installments", 0))
-            ))
-            conn.commit()
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 400
-
-@admin_bp.route("/api/contracts/<int:contract_id>/pay", methods=["POST"])
-def admin_pay_installment(contract_id):
-    data = request.json or {}
-    delta = data.get("delta", 1) # 1 หรือ -1
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM contracts WHERE id = ?", (contract_id,))
-        c = cursor.fetchone()
-        if not c:
-            return jsonify({"success": False, "error": "Not found"}), 404
-            
-        new_paid = max(0, min(c["total_installments"], c["paid_installments"] + delta))
-        cursor.execute("UPDATE contracts SET paid_installments = ? WHERE id = ?", (new_paid, contract_id))
-        
-        # บันทึกประวัติถ้าเป็นการเพิ่มงวด
-        if delta > 0:
-            cursor.execute("""
-                INSERT INTO payments (contract_number, amount, installment_no)
-                VALUES (?, ?, ?)
-            """, (c["contract_number"], c["monthly_amount"], new_paid))
-            
+        conn.execute('''
+            INSERT INTO contracts (contract_number, customer_name, phone_number, phone_model, total_amount, monthly_payment, total_installments, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'Active')
+        ''', (
+            data['contract_number'],
+            data['customer_name'],
+            data['phone_number'],
+            data['phone_model'],
+            float(data['total_amount']),
+            float(data['monthly_payment']),
+            int(data['total_installments'])
+        ))
         conn.commit()
-    return jsonify({"success": True, "new_paid": new_paid})
+        conn.close()
+        return jsonify({'status': 'success', 'message': 'เพิ่มสัญญาเรียบร้อย'})
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({'status': 'error', 'message': 'เลขที่สัญญานี้มีในระบบแล้ว'}), 400
 
-@admin_bp.route("/api/contracts/<int:contract_id>/status", methods=["POST"])
-def update_contract_status(contract_id):
+@admin_bp.route('/api/contracts/<int:contract_id>', methods=['GET'])
+def get_single_contract(contract_id):
+    conn = get_db_connection()
+    contract = conn.execute('SELECT * FROM contracts WHERE id = ?', (contract_id,)).fetchone()
+    conn.close()
+    if contract:
+        return jsonify(dict(contract))
+    return jsonify({'status': 'error', 'message': 'ไม่พบสัญญา'}), 404
+
+@admin_bp.route('/api/contracts/<int:contract_id>', methods=['PUT'])
+def update_contract(contract_id):
     data = request.json
-    status = data.get("status", "ACTIVE")
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE contracts SET status = ? WHERE id = ?", (status, contract_id))
-        conn.commit()
-    return jsonify({"success": True})
+    conn = get_db_connection()
+    conn.execute('''
+        UPDATE contracts 
+        SET contract_number = ?, customer_name = ?, phone_number = ?, phone_model = ?, 
+            total_amount = ?, monthly_payment = ?, total_installments = ?
+        WHERE id = ?
+    ''', (
+        data['contract_number'],
+        data['customer_name'],
+        data['phone_number'],
+        data['phone_model'],
+        float(data['total_amount']),
+        float(data['monthly_payment']),
+        int(data['total_installments']),
+        contract_id
+    ))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'message': 'อัปเดตสัญญาเรียบร้อย'})
 
-@admin_bp.route("/api/contracts/<int:contract_id>", methods=["DELETE"])
+@admin_bp.route('/api/contracts/<int:contract_id>/pay', methods=['POST'])
+def update_installment(contract_id):
+    action = request.json.get('action') # 'add' or 'subtract'
+    conn = get_db_connection()
+    contract = conn.execute('SELECT * FROM contracts WHERE id = ?', (contract_id,)).fetchone()
+    
+    if not contract:
+        conn.close()
+        return jsonify({'status': 'error', 'message': 'ไม่พบสัญญา'}), 404
+        
+    current_paid = contract['paid_installments']
+    
+    if action == 'add':
+        if current_paid >= contract['total_installments']:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'ชำระครบทุกงวดแล้ว'}), 400
+        new_paid = current_paid + 1
+        # บันทึกประวัติ
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute('''
+            INSERT INTO payment_history (contract_number, installment_no, amount, paid_at)
+            VALUES (?, ?, ?, ?)
+        ''', (contract['contract_number'], new_paid, contract['monthly_payment'], now))
+    elif action == 'subtract':
+        if current_paid <= 0:
+            conn.close()
+            return jsonify({'status': 'error', 'message': 'จำนวนงวดชำระเป็น 0 อยู่แล้ว'}), 400
+        new_paid = current_paid - 1
+        # ลบประวัติด้านบนสุด 1 รายการ
+        conn.execute('''
+            DELETE FROM payment_history 
+            WHERE id = (SELECT id FROM payment_history WHERE contract_number = ? ORDER BY id DESC LIMIT 1)
+        ''', (contract['contract_number'],))
+    else:
+        conn.close()
+        return jsonify({'status': 'error', 'message': 'คำสั่งไม่ถูกต้อง'}), 400
+
+    conn.execute('UPDATE contracts SET paid_installments = ? WHERE id = ?', (new_paid, contract_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'paid_installments': new_paid})
+
+@admin_bp.route('/api/contracts/<int:contract_id>/status', methods=['POST'])
+def change_status(contract_id):
+    new_status = request.json.get('status')
+    conn = get_db_connection()
+    conn.execute('UPDATE contracts SET status = ? WHERE id = ?', (new_status, contract_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'message': 'เปลี่ยนสถานะเรียบร้อย'})
+
+@admin_bp.route('/api/contracts/<int:contract_id>', methods=['DELETE'])
 def delete_contract(contract_id):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
+    conn = get_db_connection()
+    contract = conn.execute('SELECT contract_number FROM contracts WHERE id = ?', (contract_id,)).fetchone()
+    if contract:
+        conn.execute('DELETE FROM payment_history WHERE contract_number = ?', (contract['contract_number'],))
+        conn.execute('DELETE FROM contracts WHERE id = ?', (contract_id,))
         conn.commit()
-    return jsonify({"success": True})
+    conn.close()
+    return jsonify({'status': 'success', 'message': 'ลบสัญญาเรียบร้อย'})
 
-@admin_bp.route("/api/payments/<contract_number>", methods=["GET"])
+@admin_bp.route('/api/payments/<contract_number>', methods=['GET'])
 def get_payment_history(contract_number):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM payments WHERE contract_number = ? ORDER BY paid_at DESC", (contract_number,))
-        rows = cursor.fetchall()
-        return jsonify([dict(r) for r in rows])
+    conn = get_db_connection()
+    history = conn.execute('SELECT * FROM payment_history WHERE contract_number = ? ORDER BY id DESC', (contract_number,)).fetchall()
+    conn.close()
+    return jsonify([dict(row) for row in history])
