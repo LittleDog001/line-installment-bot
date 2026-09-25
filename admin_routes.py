@@ -1,7 +1,7 @@
 import sqlite3
 import datetime
 from zoneinfo import ZoneInfo
-from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, jsonify, flash
 
 admin_bp = Blueprint('admin', __name__)
 DATABASE = 'database.db'
@@ -41,35 +41,48 @@ def index():
 
 @admin_bp.route('/contract/create', methods=['POST'])
 def create_contract():
-    line_user_id = request.form.get('line_user_id')
-    customer_name = request.form.get('customer_name')
-    id_card = request.form.get('id_card')
-    phone = request.form.get('phone')
-    product_name = request.form.get('product_name')
-    total_amount = float(request.form.get('total_amount'))
-    total_installments = int(request.form.get('total_installments'))
-    installment_amount = total_amount / total_installments
-
-    contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
-
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO contracts (contract_number, line_user_id, customer_name, id_card, phone, product_name, total_amount, total_installments, installment_amount)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (contract_number, line_user_id, customer_name, id_card, phone, product_name, total_amount, total_installments, installment_amount))
+    try:
+        line_user_id = request.form.get('line_user_id', '').strip()
+        customer_name = request.form.get('customer_name', '').strip()
+        id_card = request.form.get('id_card', '').strip()
+        phone = request.form.get('phone', '').strip()
+        product_name = request.form.get('product_name', '').strip()
         
-        contract_id = cursor.lastrowid
+        total_amount_val = request.form.get('total_amount', 0)
+        total_installments_val = request.form.get('total_installments', 0)
 
-        for i in range(1, total_installments + 1):
+        total_amount = float(total_amount_val) if total_amount_val else 0.0
+        total_installments = int(total_installments_val) if total_installments_val else 0
+
+        # ป้องกันการหารด้วยศูนย์ หรือข้อมูลไม่ครบถ้วน
+        if total_installments <= 0 or total_amount <= 0:
+            return "กรุณากรอกยอดเงินรวมและจำนวนงวดให้ถูกต้อง (ต้องมากกว่า 0)", 400
+
+        installment_amount = total_amount / total_installments
+        contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
+
+        with get_db() as conn:
+            cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO payments (contract_id, installment_no, amount, status)
-                VALUES (?, ?, ?, 'pending')
-            """, (contract_id, i, installment_amount))
+                INSERT INTO contracts (contract_number, line_user_id, customer_name, id_card, phone, product_name, total_amount, total_installments, installment_amount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (contract_number, line_user_id, customer_name, id_card, phone, product_name, total_amount, total_installments, installment_amount))
+            
+            contract_id = cursor.lastrowid
 
-        conn.commit()
+            # สร้างรายการค่างวดอัตโนมัติ
+            for i in range(1, total_installments + 1):
+                cursor.execute("""
+                    INSERT INTO payments (contract_id, installment_no, amount, status)
+                    VALUES (?, ?, ?, 'pending')
+                """, (contract_id, i, installment_amount))
 
-    return redirect(url_for('admin.index'))
+            conn.commit()
+
+        return redirect(url_for('admin.index'))
+
+    except Exception as e:
+        return f"เกิดข้อผิดพลาดในการบันทึกสัญญา: {str(e)}", 500
 
 @admin_bp.route('/payment/<int:payment_id>/confirm', methods=['POST'])
 def confirm_payment(payment_id):
