@@ -8,11 +8,11 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
-import promptpay
+from promptpay import qrcode
 
 app = Flask(__name__)
 
-# ตั้งค่า Timezone ประเทศไทย (ใช้ zoneinfo ที่ built-in มากับ Python)
+# ตั้งค่า Timezone ประเทศไทย
 TH_TZ = ZoneInfo('Asia/Bangkok')
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
@@ -198,7 +198,7 @@ def send_payment_qr(user_id, installment_no, reply_token):
             return
 
         amount = contract['installment_amount']
-        qr_payload = promptpay.generate_payload(PROMPTPAY_ID, amount)
+        qr_payload = qrcode.generate_payload(PROMPTPAY_ID, amount)
         qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_payload}"
 
         line_bot_api.reply_message(
@@ -245,7 +245,7 @@ def send_early_close_qr(user_id, reply_token):
         discount_amount = remaining_balance * 0.15
         final_pay_amount = remaining_balance - discount_amount
 
-        qr_payload = promptpay.generate_payload(PROMPTPAY_ID, final_pay_amount)
+        qr_payload = qrcode.generate_payload(PROMPTPAY_ID, final_pay_amount)
         qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_payload}"
 
         msg = (
