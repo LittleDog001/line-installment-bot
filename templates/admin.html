@@ -436,6 +436,41 @@
                 alert("ไม่สามารถดึงประวัติการชำระเงินได้");
             }
         }
+        
+        async function showHistory(contractNum) {
+            try {
+                document.getElementById('modalContractNum').innerText = contractNum;
+                const res = await fetch(`/api/payments/${contractNum}`);
+                const payments = await res.json();
+                const list = document.getElementById('historyList');
+                list.innerHTML = '';
+
+                if (!payments || payments.length === 0) {
+                    list.innerHTML = `<li class="list-group-item text-center text-muted p-3">ยังไม่มีประวัติการชำระเงิน</li>`;
+                } else {
+                    payments.forEach(p => {
+                        const amt = p.amount ? Number(p.amount).toLocaleString() : '0';
+                        list.innerHTML += `
+                            <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                                <div>
+                                    <strong class="text-dark">งวดที่ ${p.installment_no}</strong><br>
+                                    <small class="text-muted"><i class="fa-regular fa-clock me-1"></i>${p.paid_at || '-'}</small>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge bg-success rounded-pill fs-6">+฿${amt}</span>
+                                    <a href="/bill/${p.id}" target="_blank" class="btn btn-sm btn-outline-primary" title="เปิดดูใบเสร็จ">
+                                        <i class="fa-solid fa-file-invoice"></i> ดูบิล
+                                    </a>
+                                </div>
+                            </li>
+                        `;
+                    });
+                }
+                if (historyModalObj) historyModalObj.show();
+            } catch (err) {
+                alert("ไม่สามารถดึงประวัติการชำระเงินได้");
+            }
+        }
     </script>
 </body>
 </html>

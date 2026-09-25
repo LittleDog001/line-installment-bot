@@ -22,10 +22,8 @@ from admin_routes import admin_bp
 
 app = Flask(__name__)
 
-# Register Admin Routes
 app.register_blueprint(admin_bp)
 
-# Config Env
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "YOUR_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "YOUR_CHANNEL_SECRET")
 PROMPTPAY_ID = os.getenv("PROMPTPAY_ID", "0812345678")
@@ -77,6 +75,24 @@ init_db()
 def admin_page():
     return render_template('admin.html')
 
+# --- Route แสดงใบเสร็จรับเงิน (Bill) ---
+@app.route('/bill/<int:payment_id>')
+def view_bill(payment_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT p.*, c.customer_name, c.phone, c.product_name, c.total_installments 
+            FROM payments p
+            JOIN contracts c ON p.contract_number = c.contract_number
+            WHERE p.id = ?
+        ''', (payment_id,))
+        payment = cursor.fetchone()
+
+    if not payment:
+        return "ไม่พบข้อมูลใบเสร็จ", 404
+
+    return render_template('bill.html', p=payment)
+
 # --- PromptPay Payload Generator ---
 def crc16(data: str) -> str:
     crc = 0xFFFF
@@ -104,7 +120,7 @@ def generate_promptpay_payload(target: str, amount: float = 0.0) -> str:
     
     payload = "000201010212"
     payload += f"29{len(merchant_info):02d}{merchant_info}"
-    payload += "5303764" # THB
+    payload += "5303764"
     
     if amount > 0:
         amt_str = f"{amount:.2f}"
@@ -114,7 +130,6 @@ def generate_promptpay_payload(target: str, amount: float = 0.0) -> str:
     payload += crc16(payload)
     return payload
 
-# --- Dynamic QR Code Image Route ---
 @app.route("/qrcode/<contract_number>/<type_pay>")
 def generate_qr_image(contract_number, type_pay):
     with get_db() as conn:
@@ -162,7 +177,7 @@ def handle_text_message(event):
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
         
-        # Check binding by Phone Number
+        # Check binding by Phone
         if user_text.isdigit() and len(user_text) >= 9:
             with get_db() as conn:
                 cursor = conn.cursor()
@@ -172,9 +187,9 @@ def handle_text_message(event):
                 if contracts:
                     cursor.execute("UPDATE contracts SET line_user_id = ? WHERE phone = ?", (user_id, user_text))
                     conn.commit()
-                    msg = f"✅ ผูกบัญชีสำเร็จเรียบร้อยแล้วครับ!\nพบข้อมูลสัญญา {len(contracts)} รายการ\n\nพิมพ์ 'สัญญา' หรือ 'เช็คค่างวด' เพื่อดูรายละเอียดได้เลยครับ"
+                    msg = f"✅ ผูกบัญชีสำเร็จเรียบร้อยแล้วครับ!\nพบข้อมูลสัญญา {len(contracts)} รายการ\n\nพิมพ์ 'สัญญา' หรือ 'ใบเสร็จ' เพื่อดูรายละเอียดได้เลยครับ"
                 else:
-                    msg = f"❌ ไม่พบข้อมูลสัญญาที่ลงทะเบียนด้วยเบอร์ {user_text}\nกรุณาตรวจสอบเบอร์โทรศัพท์อีกครั้ง หรือติดต่อแอดมินครับ"
+                    msg = f"❌ ไม่พบข้อมูลสัญญาที่ลงทะเบียนด้วยเบอร์ {user_text}\nกรุณาตรวจสอบเบอร์โทรศัพท์อีกครั้งครับ"
                     
             line_bot_api.reply_message(ReplyMessageRequest(
                 reply_token=event.reply_token,
@@ -182,7 +197,6 @@ def handle_text_message(event):
             ))
             return
 
-        # Fetch contract bound to line_user_id
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM contracts WHERE line_user_id = ? AND status = 'ACTIVE' ORDER BY id DESC", (user_id,))
@@ -196,7 +210,6 @@ def handle_text_message(event):
             ))
             return
 
-        # Commands handling
         base_url = request.host_url.rstrip('/')
         c_num = contract["contract_number"]
         paid = contract["paid_installments"]
@@ -226,7 +239,7 @@ def handle_text_message(event):
                     "type": "box", "layout": "vertical", "spacing": "sm",
                     "contents": [
                         {"type": "button", "style": "primary", "color": "#1DB446", "action": {"type": "message", "label": "💳 จ่ายค่างวดเดือนนี้", "text": "จ่ายค่างวด"}},
-                        {"type": "button", "style": "secondary", "action": {"type": "message", "label": "🔥 ชำระปิดบัญชีทั้งหมด", "text": "ปิดบัญชี"}}
+                        {"type": "button", "style": "secondary", "action": {"type": "message", "label": "📄 ดูใบเสร็จล่าสุด", "text": "ใบเสร็จ"}}
                     ]
                 }
             }
@@ -234,6 +247,25 @@ def handle_text_message(event):
                 reply_token=event.reply_token,
                 messages=[FlexMessage(alt_text="ข้อมูลสัญญาผ่อนชำระ", contents=FlexContainer.from_dict(flex_content))]
             ))
+
+        elif user_text in ["ใบเสร็จ", "ดูใบเสร็จ", "บิล"]:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM payments WHERE contract_number = ? ORDER BY id DESC LIMIT 1", (c_num,))
+                last_pay = cursor.fetchone()
+
+            if not last_pay:
+                line_bot_api.reply_message(ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="📄 ยังไม่มีประวัติการชำระเงินในระบบครับ")]
+                ))
+            else:
+                bill_url = f"{base_url}/bill/{last_pay['id']}"
+                reply_txt = f"📄 **ใบเสร็จรับเงินล่าสุด**\nเลขที่สัญญา: {c_num}\nงวดที่: {last_pay['installment_no']}\nยอดชำระ: {last_pay['amount']:,.2f} บาท\nวันที่: {last_pay['paid_at']}\n\n🔗 คลิกดูใบเสร็จสมบูรณ์:\n{bill_url}"
+                line_bot_api.reply_message(ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_txt)]
+                ))
 
         elif user_text in ["จ่ายค่างวด", "ชำระเงิน", "ขอ QR", "จ่ายเงิน"]:
             if paid >= total:
@@ -276,7 +308,7 @@ def handle_text_message(event):
         else:
             line_bot_api.reply_message(ReplyMessageRequest(
                 reply_token=event.reply_token,
-                messages=[TextMessage(text="สามารถพิมพ์คำสั่งต่อไปนี้ได้ครับ:\n- 'สัญญา' เพื่อดูรายละเอียด\n- 'จ่ายค่างวด' เพื่อขอ QR Code สแกนจ่าย\n- 'ปิดบัญชี' เพื่อจ่ายยอดที่เหลือทั้งหมด")]
+                messages=[TextMessage(text="สามารถพิมพ์คำสั่งต่อไปนี้ได้ครับ:\n- 'สัญญา' เพื่อดูรายละเอียด\n- 'ใบเสร็จ' เพื่อดูบิลล่าสุด\n- 'จ่ายค่างวด' เพื่อขอ QR Code")]
             ))
 
 if __name__ == "__main__":
