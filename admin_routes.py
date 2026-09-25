@@ -5,7 +5,8 @@ from flask import Blueprint, render_template, request, redirect, url_for, jsonif
 
 admin_bp = Blueprint('admin', __name__)
 DATABASE = 'database.db'
-TH_TZ = pytz.timezone('Asia/Bangkok')
+from zoneinfo import ZoneInfo
+TH_TZ = ZoneInfo('Asia/Bangkok')
 
 def get_db():
     conn = sqlite3.connect(DATABASE)

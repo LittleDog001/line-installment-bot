@@ -13,7 +13,8 @@ import promptpay
 app = Flask(__name__)
 
 # ตั้งค่า Timezone ประเทศไทย
-TH_TZ = pytz.timezone('Asia/Bangkok')
+from zoneinfo import ZoneInfo
+TH_TZ = ZoneInfo('Asia/Bangkok')
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
