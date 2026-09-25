@@ -1,19 +1,16 @@
 from flask import Blueprint, render_template, request, jsonify
 import sqlite3
 import datetime
+import os
 
-admin_bp = Blueprint('admin', __name__)
+admin_bp = Blueprint('admin_bp', __name__)
 
-DATABASE = "database.db"
+DATABASE = os.path.join(os.path.dirname(__file__), 'database.db')
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
-
-@admin_bp.route('/admin')
-def admin_page():
-    return render_template('admin.html')
 
 @admin_bp.route('/api/contracts', methods=['GET'])
 def get_contracts():
@@ -25,7 +22,7 @@ def get_contracts():
 
 @admin_bp.route('/api/contracts', methods=['POST'])
 def add_contract():
-    data = request.json
+    data = request.json or {}
     try:
         phone_val = data.get('phone_number') or data.get('phone')
         product_val = data.get('phone_model') or data.get('product_name')
@@ -34,8 +31,8 @@ def add_contract():
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO contracts (contract_number, customer_name, phone, product_name, total_amount, monthly_amount, total_installments, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+                INSERT INTO contracts (contract_number, customer_name, phone, product_name, total_amount, monthly_amount, total_installments, paid_installments, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'ACTIVE')
             ''', (
                 data['contract_number'],
                 data['customer_name'],
@@ -46,7 +43,7 @@ def add_contract():
                 int(data['total_installments'])
             ))
             conn.commit()
-        return jsonify({'status': 'success', 'message': 'เพิ่มสัญญาเรียบร้อย'})
+        return jsonify({'status': 'success', 'message': 'เพิ่มสัญญาเรียบร้อย'}), 201
     except sqlite3.IntegrityError:
         return jsonify({'status': 'error', 'message': 'เลขที่สัญญานี้มีในระบบแล้ว'}), 400
     except Exception as e:
@@ -64,30 +61,33 @@ def get_single_contract(contract_id):
 
 @admin_bp.route('/api/contracts/<int:contract_id>', methods=['PUT'])
 def update_contract(contract_id):
-    data = request.json
-    phone_val = data.get('phone_number') or data.get('phone')
-    product_val = data.get('phone_model') or data.get('product_name')
-    monthly_val = data.get('monthly_payment') or data.get('monthly_amount')
+    data = request.json or {}
+    try:
+        phone_val = data.get('phone_number') or data.get('phone')
+        product_val = data.get('phone_model') or data.get('product_name')
+        monthly_val = data.get('monthly_payment') or data.get('monthly_amount')
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE contracts 
-            SET contract_number = ?, customer_name = ?, phone = ?, product_name = ?, 
-                total_amount = ?, monthly_amount = ?, total_installments = ?
-            WHERE id = ?
-        ''', (
-            data['contract_number'],
-            data['customer_name'],
-            phone_val,
-            product_val,
-            float(data['total_amount']),
-            float(monthly_val),
-            int(data['total_installments']),
-            contract_id
-        ))
-        conn.commit()
-    return jsonify({'status': 'success', 'message': 'อัปเดตสัญญาเรียบร้อย'})
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE contracts 
+                SET contract_number = ?, customer_name = ?, phone = ?, product_name = ?, 
+                    total_amount = ?, monthly_amount = ?, total_installments = ?
+                WHERE id = ?
+            ''', (
+                data['contract_number'],
+                data['customer_name'],
+                phone_val,
+                product_val,
+                float(data['total_amount']),
+                float(monthly_val),
+                int(data['total_installments']),
+                contract_id
+            ))
+            conn.commit()
+        return jsonify({'status': 'success', 'message': 'อัปเดตสัญญาเรียบร้อย'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @admin_bp.route('/api/contracts/<int:contract_id>/pay', methods=['POST'])
 def update_installment(contract_id):

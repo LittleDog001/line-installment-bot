@@ -33,7 +33,7 @@ PROMPTPAY_ID = os.getenv("PROMPTPAY_ID", "0812345678")
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-DATABASE = "database.db"
+DATABASE = os.path.join(os.path.dirname(__file__), 'database.db')
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
@@ -71,6 +71,11 @@ def init_db():
         conn.commit()
 
 init_db()
+
+@app.route('/')
+@app.route('/admin')
+def admin_page():
+    return render_template('admin.html')
 
 # --- PromptPay Payload Generator ---
 def crc16(data: str) -> str:
