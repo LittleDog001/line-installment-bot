@@ -261,44 +261,40 @@
             let activeContracts = 0;
             let totalPaid = 0;
 
-            contracts.forEach(c => {
-                if (c.status === 'Active') activeContracts++;
-                totalPaid += (c.paid_installments * c.monthly_payment);
-
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>
-                        <strong class="text-primary">${c.contract_number}</strong><br>
-                        <span class="small fw-bold">${c.customer_name}</span><br>
-                        <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>${c.phone_number}</small>
-                    </td>
-                    <td>
-                        <span class="fw-semibold">${c.phone_model}</span><br>
-                        <small class="text-muted">฿${c.monthly_payment.toLocaleString()}/งวด (รวม ฿${c.total_amount.toLocaleString()})</small>
-                    </td>
-                    <td>
-                        <span class="badge bg-primary fs-6">${c.paid_installments} / ${c.total_installments}</span>
-                    </td>
-                    <td>
-                        <span class="badge ${c.status === 'Active' ? 'badge-status-active' : 'badge-status-cancelled'}">
-                            ${c.status}
-                        </span>
-                    </td>
-                    <td class="text-center">
-                        <div class="btn-group action-btn-group" role="group">
-                            <button class="btn btn-outline-success" onclick="updatePaid(${c.id}, 'add')" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i></button>
-                            <button class="btn btn-outline-warning" onclick="updatePaid(${c.id}, 'subtract')" title="ตัดงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
-                            <button class="btn btn-outline-info" onclick="showHistory('${c.contract_number}')" title="ดูประวัติชำระ"><i class="fa-solid fa-history"></i></button>
-                        </div>
-                    </td>
-                    <td class="text-center">
-                        <div class="btn-group action-btn-group" role="group">
-                            <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
-                            <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
-                            <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
-                        </div>
-                    </td>
-                `;
+            const tr = document.createElement('tr');
+tr.innerHTML = `
+    <td>
+        <strong class="text-primary">${c.contract_number}</strong><br>
+        <span class="small fw-bold">${c.customer_name}</span><br>
+        <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>${c.phone}</small>
+    </td>
+    <td>
+        <span class="fw-semibold">${c.product_name}</span><br>
+        <small class="text-muted">฿${c.monthly_amount.toLocaleString()}/งวด (รวม ฿${c.total_amount.toLocaleString()})</small>
+    </td>
+    <td>
+        <span class="badge bg-primary fs-6">${c.paid_installments} / ${c.total_installments}</span>
+    </td>
+    <td>
+        <span class="badge ${c.status === 'ACTIVE' ? 'badge-status-active' : 'badge-status-cancelled'}">
+            ${c.status}
+        </span>
+    </td>
+    <td class="text-center">
+        <div class="btn-group action-btn-group" role="group">
+            <button class="btn btn-outline-success" onclick="updatePaid(${c.id}, 'add')" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i></button>
+            <button class="btn btn-outline-warning" onclick="updatePaid(${c.id}, 'subtract')" title="ตัดงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
+            <button class="btn btn-outline-info" onclick="showHistory('${c.contract_number}')" title="ดูประวัติชำระ"><i class="fa-solid fa-history"></i></button>
+        </div>
+    </td>
+    <td class="text-center">
+        <div class="btn-group action-btn-group" role="group">
+            <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
+            <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
+            <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
+        </div>
+    </td>
+`;
                 tbody.appendChild(tr);
             });
 
