@@ -29,7 +29,7 @@
     <nav class="navbar navbar-dark mb-4 shadow-sm">
         <div class="container-fluid px-4">
             <a class="navbar-brand fw-bold" href="#">
-                <i class="fa-solid font-mobile-screen-button me-2"></i>ระบบผ่อนมือถือ (Admin Panel)
+                <i class="fa-solid fa-mobile-screen-button me-2"></i>ระบบผ่อนมือถือ (Admin Panel)
             </a>
             <span class="text-white small"><i class="fa-solid fa-circle-user me-1"></i> ผู้ดูแลระบบ</span>
         </div>
@@ -261,40 +261,50 @@
             let activeContracts = 0;
             let totalPaid = 0;
 
-            const tr = document.createElement('tr');
-tr.innerHTML = `
-    <td>
-        <strong class="text-primary">${c.contract_number}</strong><br>
-        <span class="small fw-bold">${c.customer_name}</span><br>
-        <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>${c.phone}</small>
-    </td>
-    <td>
-        <span class="fw-semibold">${c.product_name}</span><br>
-        <small class="text-muted">฿${c.monthly_amount.toLocaleString()}/งวด (รวม ฿${c.total_amount.toLocaleString()})</small>
-    </td>
-    <td>
-        <span class="badge bg-primary fs-6">${c.paid_installments} / ${c.total_installments}</span>
-    </td>
-    <td>
-        <span class="badge ${c.status === 'ACTIVE' ? 'badge-status-active' : 'badge-status-cancelled'}">
-            ${c.status}
-        </span>
-    </td>
-    <td class="text-center">
-        <div class="btn-group action-btn-group" role="group">
-            <button class="btn btn-outline-success" onclick="updatePaid(${c.id}, 'add')" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i></button>
-            <button class="btn btn-outline-warning" onclick="updatePaid(${c.id}, 'subtract')" title="ตัดงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
-            <button class="btn btn-outline-info" onclick="showHistory('${c.contract_number}')" title="ดูประวัติชำระ"><i class="fa-solid fa-history"></i></button>
-        </div>
-    </td>
-    <td class="text-center">
-        <div class="btn-group action-btn-group" role="group">
-            <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
-            <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
-            <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
-        </div>
-    </td>
-`;
+            contracts.forEach(c => {
+                const isStatusActive = (c.status === 'ACTIVE' || c.status === 'Active');
+                if (isStatusActive) activeContracts++;
+                
+                const monthly = c.monthly_amount || c.monthly_payment || 0;
+                const phone = c.phone || c.phone_number || '';
+                const productName = c.product_name || c.phone_model || '';
+
+                totalPaid += (c.paid_installments * monthly);
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>
+                        <strong class="text-primary">${c.contract_number}</strong><br>
+                        <span class="small fw-bold">${c.customer_name}</span><br>
+                        <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>${phone}</small>
+                    </td>
+                    <td>
+                        <span class="fw-semibold">${productName}</span><br>
+                        <small class="text-muted">฿${monthly.toLocaleString()}/งวด (รวม ฿${c.total_amount.toLocaleString()})</small>
+                    </td>
+                    <td>
+                        <span class="badge bg-primary fs-6">${c.paid_installments} / ${c.total_installments}</span>
+                    </td>
+                    <td>
+                        <span class="badge ${isStatusActive ? 'badge-status-active' : 'badge-status-cancelled'}">
+                            ${c.status}
+                        </span>
+                    </td>
+                    <td class="text-center">
+                        <div class="btn-group action-btn-group" role="group">
+                            <button class="btn btn-outline-success" onclick="updatePaid(${c.id}, 'add')" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i></button>
+                            <button class="btn btn-outline-warning" onclick="updatePaid(${c.id}, 'subtract')" title="ตัดงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
+                            <button class="btn btn-outline-info" onclick="showHistory('${c.contract_number}')" title="ดูประวัติชำระ"><i class="fa-solid fa-history"></i></button>
+                        </div>
+                    </td>
+                    <td class="text-center">
+                        <div class="btn-group action-btn-group" role="group">
+                            <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
+                            <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </td>
+                `;
                 tbody.appendChild(tr);
             });
 
@@ -324,10 +334,10 @@ tr.innerHTML = `
             document.getElementById('edit_id').value = c.id;
             document.getElementById('edit_contract_number').value = c.contract_number;
             document.getElementById('edit_customer_name').value = c.customer_name;
-            document.getElementById('edit_phone_number').value = c.phone_number;
-            document.getElementById('edit_phone_model').value = c.phone_model;
+            document.getElementById('edit_phone_number').value = c.phone || c.phone_number;
+            document.getElementById('edit_phone_model').value = c.product_name || c.phone_model;
             document.getElementById('edit_total_amount').value = c.total_amount;
-            document.getElementById('edit_monthly_payment').value = c.monthly_payment;
+            document.getElementById('edit_monthly_payment').value = c.monthly_amount || c.monthly_payment;
             document.getElementById('edit_total_installments').value = c.total_installments;
 
             editModal.show();
@@ -360,7 +370,8 @@ tr.innerHTML = `
         });
 
         async function toggleStatus(id, currentStatus) {
-            const newStatus = currentStatus === 'Active' ? 'Cancelled' : 'Active';
+            const isCurrentlyActive = (currentStatus === 'ACTIVE' || currentStatus === 'Active');
+            const newStatus = isCurrentlyActive ? 'CANCELLED' : 'ACTIVE';
             if (confirm(`คุณต้องการเปลี่ยนสถานะเป็น ${newStatus} ใช่หรือไม่?`)) {
                 await fetch(`/api/contracts/${id}/status`, {
                     method: 'POST',
