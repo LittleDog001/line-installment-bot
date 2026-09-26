@@ -28,10 +28,16 @@ def send_push_thank_you(user_id, contract_number, product_name):
     except Exception as e:
         print(f"Error sending thank you message to {user_id}: {e}")
 
-# เพิ่มระบบ: ส่งแจ้งเตือนไปยังลูกค้าเมื่อสัญญาโดนยกเลิกหรือลบ
-def send_push_cancellation(user_id, contract_number, product_name):
+# เพิ่มระบบ: ส่งแจ้งเตือนไปยังลูกค้าเมื่อสัญญาโดนยกเลิกหรือลบ (พร้อมเงื่อนไขป้องกัน หากปิดยอด/จ่ายครบแล้ว จะไม่มีการแจ้งเตือนว่ายกเลิก)
+def send_push_cancellation(user_id, contract_number, product_name, contract_status="active"):
     if not user_id:
         return
+    
+    # เงื่อนไขป้องกัน: หากสถานะสัญญาเป็น closed หรือ closed_early (จ่ายครบหรือปิดยอดไปแล้ว) จะไม่มีการส่งแจ้งเตือนยกเลิก
+    if contract_status in ['closed', 'closed_early']:
+        print(f"Contract {contract_number} is already closed/completed. Skipping cancellation notification.")
+        return
+
     try:
         msg = (
             f"⚠️ แจ้งเตือนสถานะสัญญาของคุณ\n"
@@ -43,6 +49,24 @@ def send_push_cancellation(user_id, contract_number, product_name):
         line_bot_api.push_message(user_id, TextSendMessage(text=msg))
     except Exception as e:
         print(f"Error sending cancellation message to {user_id}: {e}")
+
+# เพิ่มระบบ: แจ้งเตือนลูกค้าผ่าน LINE เมื่อหลังบ้านกดแก้ไขสัญญา พร้อมระบุรายละเอียดสิ่งที่แก้ไข
+def send_push_contract_updated(user_id, contract_number, product_name, updated_fields_text):
+    if not user_id:
+        return
+    try:
+        msg = (
+            f"📝 แจ้งการอัปเดตข้อมูลสัญญาของคุณ\n"
+            f"-------------------------------\n"
+            f"📦 สินค้า: {product_name}\n"
+            f"เลขที่สัญญา: {contract_number}\n\n"
+            f"ทางร้านได้ทำการแก้ไขข้อมูลสัญญาของคุณ มีรายละเอียดดังนี้:\n"
+            f"{updated_fields_text}\n\n"
+            f"หากมีข้อสงสัยประการใดสามารถติดต่อสอบถามเจ้าหน้าที่ได้เลยครับ 🙏"
+        )
+        line_bot_api.push_message(user_id, TextSendMessage(text=msg))
+    except Exception as e:
+        print(f"Error sending contract update message to {user_id}: {e}")
 
 def get_db():
     db_url = os.environ.get('DATABASE_URL')
@@ -291,6 +315,19 @@ def process_contract_detail_api(contract_id):
             product_name = (data.get('product_name') or '').strip()
             due_day = int(data.get('due_day', 5))
 
+            # ตรวจสอบฟิลด์ที่มีการเปลี่ยนแปลง เพื่อนำไปแจ้งเตือนลูกค้า
+            changes = []
+            if contract.get('customer_name') != customer_name:
+                changes.append(f"- ชื่อ-นามสกุล: {contract.get('customer_name')} ➡️ {customer_name}")
+            if contract.get('phone') != phone:
+                changes.append(f"- เบอร์โทรศัพท์: {contract.get('phone')} ➡️ {phone}")
+            if contract.get('id_card') != id_card:
+                changes.append(f"- เลขบัตรประชาชน: {contract.get('id_card')} ➡️ {id_card}")
+            if contract.get('product_name') != product_name:
+                changes.append(f"- รุ่นสินค้า: {contract.get('product_name')} ➡️ {product_name}")
+            if contract.get('due_day') != due_day:
+                changes.append(f"- วันชำระประจำเดือน: ทุกวันที่ {contract.get('due_day')} ➡️ ทุกวันที่ {due_day}")
+
             cursor.execute("""
                 UPDATE contracts 
                 SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s, due_day = %s
@@ -298,16 +335,23 @@ def process_contract_detail_api(contract_id):
             """, (line_user_id, customer_name, id_card, phone, product_name, due_day, contract_id))
 
             conn.commit()
+
+            # ส่งแจ้งเตือนทาง LINE หากมีการแก้ไขข้อมูลและมีระบุ line_user_id ไว้
+            target_line_user_id = line_user_id if line_user_id else contract.get('line_user_id')
+            if target_line_user_id and changes:
+                changes_text = "\n".join(changes)
+                send_push_contract_updated(target_line_user_id, contract.get('contract_number'), product_name, changes_text)
+
             return jsonify({'message': 'แก้ไขสัญญาสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
-            # ดึงข้อมูลมาส่งแจ้งเตือนลูกค้าก่อนลบสัญญาออกจากระบบ
+            # ดึงข้อมูลมาส่งแจ้งเตือนลูกค้าก่อนลบสัญญาออกจากระบบ (พร้อมเงื่อนไขป้องกันหากปิดยอดไปแล้วจะไม่แจ้งเตือน)
             if contract.get('line_user_id'):
-                send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
+                send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'), contract.get('status'))
 
             cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
             conn.commit()
-            return jsonify({'message': 'ลบสัญญาสำเร็จและส่งแจ้งเตือนลูกค้าแล้ว', 'contract_id': contract_id})
+            return jsonify({'message': 'ลบสัญญาสำเร็จและตรวจสอบเงื่อนไขแจ้งเตือนลูกค้าแล้ว', 'contract_id': contract_id})
 
         c_dict = dict(contract)
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
@@ -505,12 +549,12 @@ def update_contract_status_api(contract_id):
         cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (status, contract_id))
         conn.commit()
 
-        # เพิ่มระบบ: หากเปลี่ยนสถานะเป็น cancelled ให้ส่ง LINE แจ้งเตือนลูกค้าทันที
+        # เพิ่มระบบ: หากเปลี่ยนสถานะเป็น cancelled ให้ส่ง LINE แจ้งเตือนลูกค้าทันที (พร้อมเงื่อนไขป้องกัน หากปิดยอดไปแล้วจะไม่แจ้งเตือนซ้ำซ้อน)
         if status.lower() == 'cancelled':
             cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
             contract = cursor.fetchone()
             if contract:
-                send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
+                send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'), contract.get('status'))
 
         return jsonify({'message': 'อัปเดตสถานะสัญญาเรียบร้อยแล้ว', 'status': status})
     except Exception as e:
