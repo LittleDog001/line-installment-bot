@@ -28,7 +28,7 @@ def send_push_thank_you(user_id, contract_number, product_name):
     except Exception as e:
         print(f"Error sending thank you message to {user_id}: {e}")
 
-# เพิ่มระบบ: ส่งแจ้งเตือนไปยังลูกค้าเมื่อสัญญาโดนยกเลิก
+# เพิ่มระบบ: ส่งแจ้งเตือนไปยังลูกค้าเมื่อสัญญาโดนยกเลิกหรือลบ
 def send_push_cancellation(user_id, contract_number, product_name):
     if not user_id:
         return
@@ -38,7 +38,7 @@ def send_push_cancellation(user_id, contract_number, product_name):
             f"-------------------------------\n"
             f"📦 สินค้า: {product_name}\n"
             f"เลขที่สัญญา: {contract_number}\n\n"
-            f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก** จากทางระบบเรียบร้อยแล้วครับ หากมีข้อสงสัยประการใดกรุณาติดต่อเจ้าหน้าที่ 🙏"
+            f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบ** เรียบร้อยแล้วครับ หากมีข้อสงสัยประการใดกรุณาติดต่อเจ้าหน้าที่ 🙏"
         )
         line_bot_api.push_message(user_id, TextSendMessage(text=msg))
     except Exception as e:
@@ -301,9 +301,13 @@ def process_contract_detail_api(contract_id):
             return jsonify({'message': 'แก้ไขสัญญาสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
+            # ดึงข้อมูลมาส่งแจ้งเตือนลูกค้าก่อนลบสัญญาออกจากระบบ
+            if contract.get('line_user_id'):
+                send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
+
             cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
             conn.commit()
-            return jsonify({'message': 'ลบสัญญาสำเร็จ', 'contract_id': contract_id})
+            return jsonify({'message': 'ลบสัญญาสำเร็จและส่งแจ้งเตือนลูกค้าแล้ว', 'contract_id': contract_id})
 
         c_dict = dict(contract)
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))

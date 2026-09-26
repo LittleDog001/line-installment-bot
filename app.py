@@ -107,6 +107,26 @@ def root_api_contracts():
 
 @app.route('/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
 def root_api_contract_detail(contract_id):
+    if request.method == 'DELETE':
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+            contract = cursor.fetchone()
+            if contract and contract.get('line_user_id'):
+                cancel_msg = (
+                    f"⚠️ แจ้งเตือนสถานะสัญญาของคุณ\n"
+                    f"-------------------------------\n"
+                    f"📦 สินค้า: {contract['product_name']}\n"
+                    f"เลขที่สัญญา: {contract['contract_number']}\n\n"
+                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบ** เรียบร้อยแล้วครับ 🙏"
+                )
+                send_simple_push_notification(contract['line_user_id'], cancel_msg)
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error sending push on root delete contract: {e}")
+            
     return process_contract_detail_api(contract_id)
 
 @app.route('/api/contracts/<int:contract_id>/status', methods=['PUT', 'POST'])
