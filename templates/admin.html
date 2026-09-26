@@ -202,8 +202,17 @@
                         <h5 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list-check text-primary me-2"></i>รายการสัญญาทั้งหมด</h5>
                         <button class="btn btn-sm btn-outline-secondary" onclick="loadContracts()"><i class="fa-solid fa-rotate-right me-1"></i> รีเฟรช</button>
                     </div>
+
+                    <!-- ช่องค้นหาสัญญาในหน้าหลังบ้าน -->
+                    <div class="mb-3">
+                        <div class="input-group">
+                            <span class="input-group-text bg-white text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
+                            <input type="text" id="searchContractInput" class="form-control" placeholder="ค้นหาด้วย ชื่อ-สกุล, เลขที่สัญญา, เบอร์โทร หรือ เลขบัตรประชาชน..." onkeyup="filterContracts()">
+                        </div>
+                    </div>
+
                     <div class="table-responsive">
-                        <table class="table table-hover align-middle">
+                        <table class="table table-hover align-middle" id="contractsTable">
                             <thead class="table-light">
                                 <tr class="small text-muted">
                                     <th>สัญญา/ลูกค้า</th>
@@ -303,6 +312,26 @@
             loadContracts();
             toggleCalcType();
         });
+
+        function filterContracts() {
+            const input = document.getElementById("searchContractInput");
+            const filter = input.value.toLowerCase().replace(/[- ]/g, '');
+            const table = document.getElementById("contractsTable");
+            const tr = table.getElementsByTagName("tr");
+
+            for (let i = 1; i < tr.length; i++) {
+                const td = tr[i].getElementsByTagName("td")[0];
+                if (td) {
+                    const txtValue = td.textContent || td.innerText;
+                    const cleanTxt = txtValue.toLowerCase().replace(/[- ]/g, '');
+                    if (cleanTxt.indexOf(filter) > -1) {
+                        tr[i].style.display = "";
+                    } else {
+                        tr[i].style.display = "none";
+                    }
+                }
+            }
+        }
 
         function toggleCalcType() {
             const calcType = document.getElementById('calc_type').value;
@@ -567,6 +596,8 @@
                 document.getElementById('statDueThisMonth').innerText = dueThisMonthCount;
                 document.getElementById('statPaidThisMonth').innerText = paidThisMonthCount;
                 document.getElementById('unpaidBillsBadge').innerText = `${unpaidBillsList.length} รายการ`;
+
+                filterContracts();
 
             } catch (err) {
                 console.error("Error loading contracts:", err);

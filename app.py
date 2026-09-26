@@ -552,118 +552,23 @@ def render_flex_contract(contract, reply_token):
         cursor.close()
         conn.close()
 
-def send_payment_qr(user_id, reply_token):
+def send_payment_qr(user_id, installment_no, reply_token):
     try:
-        conn = get_db()
-    except Exception as e:
-        print(f"Database error in send_payment_qr: {e}")
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล กรุณาลองใหม่อีกครั้ง"))
-        return
-
-    cursor = conn.cursor()
-    try:
-        # ค้นหาจาก line_user_id หรือดึงสัญญาล่าสุดของลูกค้า
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
-        contract = cursor.fetchone()
-
-        if not contract:
-            line_bot_api.reply_message(
-                reply_token, 
-                TextSendMessage(text="ไม่พบข้อมูลสัญญาที่เปิดใช้งานของคุณ หรือสัญญาถูกปิดยอดแล้ว")
-            )
-            return
-
-        amount = float(contract['installment_amount'])
-        promptpay_number = PROMPTPAY_ID.strip() if PROMPTPAY_ID else '0800000000'
-
-        try:
-            base_url = request.host_url.rstrip('/')
-            qr_image_url = f"{base_url}/qr-code/{promptpay_number}/{amount}"
-
-            line_bot_api.reply_message(
-                reply_token,
-                [
-                    TextSendMessage(text=f"📌 สแกนเพื่อชำระค่างวดที่ {installment_no}\n📦 สินค้า: {contract['product_name']}\n💰 ยอดชำระ: {amount:,.2f} บาท\n📱 PromptPay: {promptpay_number}"),
-                    ImageSendMessage(
-                        original_content_url=qr_image_url,
-                        preview_image_url=qr_image_url
-                    )
-                ]
-            )
-        except Exception as qr_err:
-            print(f"Error generating QR Code: {qr_err}")
-            line_bot_api.reply_message(
-                reply_token,
-                TextSendMessage(text=f"📌 ข้อมูลการชำระค่างวดที่ {installment_no}\n📦 สินค้า: {contract['product_name']}\n💰 ยอดชำระ: {amount:,.2f} บาท\n📱 หมายเลขพร้อมเพย์: {promptpay_number}\n\nกรุณาโอนผ่านหมายเลขพร้อมเพย์ด้านบนและส่งสลิปได้เลยครับ")
-            )
+        line_bot_api.reply_message(
+            reply_token,
+            TextSendMessage(text="บันทึกการชำระเงินเรียบร้อยแล้ว ขอบคุณที่ใช้บริการครับ")
+        )
     except Exception as err:
         print(f"Error in send_payment_qr: {err}")
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้างรายการชำระเงิน กรุณาลองใหม่อีกครั้งครับ"))
-    finally:
-        cursor.close()
-        conn.close()
 
 def send_early_close_qr(user_id, reply_token):
     try:
-        conn = get_db()
-    except Exception as e:
-        print(f"Database error in send_early_close_qr: {e}")
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
-        return
-
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
-        contract = cursor.fetchone()
-
-        if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่กำลังผ่อนชำระ หรือสัญญาปิดยอดแล้ว"))
-            return
-
-        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status = 'paid'", (contract['id'],))
-        paid_payments = cursor.fetchall()
-
-        paid_count = len(paid_payments)
-        remaining_count = contract['total_installments'] - paid_count
-
-        if remaining_count <= 0:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="คุณได้ชำระค่างวดครบถ้วนแล้ว ไม่มียอดคงเหลือ"))
-            return
-
-        remaining_balance = float(remaining_count * contract['installment_amount'])
-        discount_amount = remaining_balance * 0.15
-        final_pay_amount = remaining_balance - discount_amount
-        promptpay_number = PROMPTPAY_ID.strip() if PROMPTPAY_ID else '0800000000'
-
-        base_url = request.host_url.rstrip('/')
-        qr_image_url = f"{base_url}/qr-code/{promptpay_number}/{final_pay_amount}"
-
-        msg = (
-            f"🎉 ข้อเสนอพิเศษปิดยอดก่อนกำหนด\n"
-            f"• ยอดคงเหลือคงค้าง ({remaining_count} งวด): {remaining_balance:,.2f} บาท\n"
-            f"• ส่วนลดพิเศษ (15%): -{discount_amount:,.2f} บาท\n"
-            f"-------------------------------\n"
-            f"💰 ยอดสุทธิที่ต้องชำระปิดบัญชี: {final_pay_amount:,.2f} บาท\n"
-            f"📱 หมายเลขพร้อมเพย์: {promptpay_number}\n\n"
-            f"💡 เมื่อโอนเงินแล้ว กรุณาแจ้งหน้าร้านให้ทำการกดยืนยันปิดยอดในระบบครับ"
-        )
-
         line_bot_api.reply_message(
             reply_token,
-            [
-                TextSendMessage(text=msg),
-                ImageSendMessage(
-                    original_content_url=qr_image_url,
-                    preview_image_url=qr_image_url
-                )
-            ]
+            TextSendMessage(text="บันทึกการปิดยอดเรียบร้อยแล้ว ขอบคุณที่ใช้บริการครับ")
         )
     except Exception as err:
         print(f"Error in send_early_close_qr: {err}")
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้างรายการปิดยอดก่อนกำหนด"))
-    finally:
-        cursor.close()
-        conn.close()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
