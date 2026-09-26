@@ -307,3 +307,88 @@ def get_contract_detail_api(contract_id):
     finally:
         cursor.close()
         conn.close()
+
+# --- API พิเศษสำหรับปุ่มใน JS ของหน้าหลังบ้าน ---
+
+@admin_bp.route('/api/payments/<contract_identifier>', methods=['GET'])
+@admin_bp.route('/payments/<contract_identifier>', methods=['GET'])
+def get_payments_by_contract_api(contract_identifier):
+    if not DATABASE_URL:
+        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE contract_number = %s OR id::text = %s", (contract_identifier, contract_identifier))
+        contract = cursor.fetchone()
+        if not contract:
+            return jsonify({'error': 'ไม่พบสัญญา'}), 404
+
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
+        payments = [dict(p) for p in cursor.fetchall()]
+        return jsonify(payments)
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+def pay_contract_installment_api(contract_id):
+    if not DATABASE_URL:
+        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        data = request.get_json() if request.is_json else request.form
+        installment_no = data.get('installment_no')
+
+        if installment_no:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract_id, int(installment_no)))
+        else:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1", (contract_id,))
+
+        payment = cursor.fetchone()
+
+        if not payment:
+            return jsonify({'error': 'ไม่พบรายการงวดที่ต้องชำระ'}), 404
+
+        receipt_no = f"REC-{contract_id}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+        cursor.execute("""
+            UPDATE payments 
+            SET status = 'paid', paid_at = %s, receipt_no = %s
+            WHERE id = %s
+        """, (now_str, receipt_no, payment['id']))
+
+        conn.commit()
+        return jsonify({'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว', 'payment_id': payment['id']})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
+def update_contract_status_api(contract_id):
+    if not DATABASE_URL:
+        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        data = request.get_json() if request.is_json else request.form
+        status = data.get('status', 'active')
+
+        cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (status, contract_id))
+        conn.commit()
+
+        return jsonify({'message': 'อัปเดตสถานะสัญญาเรียบร้อยแล้ว', 'status': status})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
