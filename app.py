@@ -145,7 +145,6 @@ def check_due_notifications():
         return {"success": False, "error": str(e)}
 
     today = datetime.datetime.now(TH_TZ).date()
-    current_day = today.day
     notified_count = 0
 
     cursor = conn.cursor()
@@ -160,18 +159,15 @@ def check_due_notifications():
 
             due_day = c.get('due_day') or 5
             
-            # คำนวณวันกำหนดชำระของเดือนนี้
             try:
                 due_date_this_month = datetime.date(today.year, today.month, due_day)
             except ValueError:
-                # กรณีเดือนนั้นมีวันน้อยกว่า due_day (เช่น กุมภาพันธ์)
                 import calendar
                 last_day = calendar.monthrange(today.year, today.month)[1]
                 due_date_this_month = datetime.date(today.year, today.month, last_day)
 
             days_diff = (due_date_this_month - today).days
 
-            # เช็กรายการชำระของสัญญานี้
             cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
             payments = cursor.fetchall()
 
@@ -179,11 +175,10 @@ def check_due_notifications():
             next_installment_no = paid_count + 1
 
             if next_installment_no > c['total_installments']:
-                continue  # ชำระครบแล้ว
+                continue
 
             installment_amount = float(c['installment_amount'])
 
-            # เงื่อนไขการแจ้งเตือน: แจ้งเตือนล่วงหน้า 3 วัน หรือ แจ้งเตือนเมื่อถึงกำหนดวันนี้
             if days_diff == 3:
                 msg = (
                     f"⏰ แจ้งเตือนค่างวดผ่อนชำระ (ล่วงหน้า 3 วัน)\n"
@@ -331,16 +326,53 @@ def handle_message(event):
     elif user_text == "ยืนยันปิดยอดชำระแล้ว":
         process_user_close_early(user_id, event.reply_token)
     else:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(
-                text="พิมพ์ 'เช็คยอด' เพื่อดูรายละเอียด หรือกดเมนูด้านล่างครับ",
-                quick_reply=QuickReply(items=[
-                    QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด")),
-                    QuickReplyButton(action=MessageAction(label="ปิดยอดก่อนกำหนด (ลด 15%)", text="ปิดยอดก่อนกำหนด"))
-                ])
+        # ระบบค้นหาสัญญาด้วย เบอร์โทร บัตรประชาชน หรือ ชื่อ-สกุล
+        search_contract_and_reply(user_id, user_text, event.reply_token)
+
+def search_contract_and_reply(user_id, search_term, reply_token):
+    try:
+        conn = get_db()
+    except Exception:
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
+        return
+
+    cursor = conn.cursor()
+    try:
+        # ลบขีดหรือช่องว่างกรณีค้นหาเบอร์หรือบัตรประชาชน
+        clean_term = search_term.replace('-', '').replace(' ', '')
+
+        cursor.execute("""
+            SELECT * FROM contracts 
+            WHERE REPLACE(phone, '-', '') = %s 
+               OR REPLACE(id_card, '-', '') = %s 
+               OR customer_name LIKE %s 
+               OR contract_number = %s
+            ORDER BY id DESC LIMIT 1
+        """, (clean_term, clean_term, f"%{search_term}%", search_term))
+
+        contract = cursor.fetchone()
+
+        if contract:
+            # ทำการผูก line_user_id อัตโนมัติหากยังไม่ได้ผูก
+            if not contract['line_user_id']:
+                cursor.execute("UPDATE contracts SET line_user_id = %s WHERE id = %s", (user_id, contract['id']))
+                conn.commit()
+
+            render_flex_contract(contract, reply_token)
+        else:
+            line_bot_api.reply_message(
+                reply_token,
+                TextSendMessage(
+                    text="ไม่พบข้อมูลสัญญาจากคำค้นหาของคุณ กรุณาพิมพ์ เบอร์โทรศัพท์, เลขบัตรประชาชน หรือ ชื่อ-นามสกุล ที่ใช้ลงทะเบียนสัญญาให้ถูกต้องครับ",
+                    quick_reply=QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด")),
+                        QuickReplyButton(action=MessageAction(label="ปิดยอดก่อนกำหนด", text="ปิดยอดก่อนกำหนด"))
+                    ])
+                )
             )
-        )
+    finally:
+        cursor.close()
+        conn.close()
 
 def send_contract_status(user_id, reply_token):
     try:
@@ -354,9 +386,25 @@ def send_contract_status(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาผ่อนชำระของคุณในระบบ"))
+            line_bot_api.reply_message(
+                reply_token, 
+                TextSendMessage(text="ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้\n\n💡 ท่านสามารถพิมพ์ 'เบอร์โทรศัพท์', 'เลขบัตรประชาชน' หรือ 'ชื่อ-นามสกุล' เพื่อค้นหาสัญญาของคุณได้เลยครับ")
+            )
             return
 
+        render_flex_contract(contract, reply_token)
+    finally:
+        cursor.close()
+        conn.close()
+
+def render_flex_contract(contract, reply_token):
+    try:
+        conn = get_db()
+    except Exception:
+        return
+
+    cursor = conn.cursor()
+    try:
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
         payments = cursor.fetchall()
 
@@ -409,6 +457,8 @@ def send_contract_status(user_id, reply_token):
                     {"type": "box", "layout": "vertical", "margin": "md", "spacing": "sm", "contents": [
                         {"type": "text", "text": f"ผู้กู้/ผู้ผ่อน: {contract['customer_name']}", "size": "sm"},
                         {"type": "text", "text": f"เลขบัตรประชาชน: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"เบอร์โทรศัพท์: {contract['phone'] if contract['phone'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"ค่างวด: {float(contract['installment_amount']):,.2f} บาท/งวด", "size": "sm", "weight": "bold", "color": "#2c3e50"},
                         {"type": "text", "text": f"งวดทั้งหมด: {contract['total_installments']} งวด", "size": "sm"},
                         {"type": "text", "text": f"📅 กำหนดชำระทุกวันที่: {due_day} ของเดือน", "size": "sm", "color": "#2980b9", "weight": "bold"},
                         {"type": "text", "text": f"ชำระแล้ว: {paid_count} งวด", "size": "sm", "color": "#27ae60"},

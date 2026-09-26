@@ -36,7 +36,6 @@ def index():
             c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
             c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
 
-            # แปลงวันที่ทำสัญญาและการดึง due_day
             c_dict['due_day'] = c_dict.get('due_day', 5) or 5
             if c_dict.get('created_at'):
                 c_dict['created_at_formatted'] = c_dict['created_at'].strftime('%d/%m/%Y %H:%M')
@@ -80,16 +79,22 @@ def create_contract():
         
         raw_total = request.form.get('total_amount', 0)
         raw_installments = request.form.get('total_installments', 0)
+        raw_installment_amount = request.form.get('installment_amount', 0)
         raw_due_day = request.form.get('due_day', 5)
 
-        total_amount = float(raw_total) if raw_total else 0.0
         total_installments = int(raw_installments) if raw_installments else 0
         due_day = int(raw_due_day) if raw_due_day else 5
 
-        if total_installments <= 0 or total_amount <= 0:
-            return "กรุณากรอกยอดเงินรวมและจำนวนงวดให้ถูกต้อง (ต้องมากกว่า 0)", 400
+        if raw_installment_amount and float(raw_installment_amount) > 0:
+            installment_amount = float(raw_installment_amount)
+            total_amount = installment_amount * total_installments
+        else:
+            total_amount = float(raw_total) if raw_total else 0.0
+            installment_amount = total_amount / total_installments if total_installments > 0 else 0.0
 
-        installment_amount = total_amount / total_installments
+        if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
+            return "กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง", 400
+
         contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
 
         cursor.execute("""
@@ -139,14 +144,24 @@ def process_contracts_api():
             phone = (data.get('phone') or '').strip()
             product_name = (data.get('product_name') or '').strip()
             
-            total_amount = float(data.get('total_amount', 0))
-            total_installments = int(data.get('total_installments', 0))
-            due_day = int(data.get('due_day', 5))
+            raw_total = data.get('total_amount', 0)
+            raw_installments = data.get('total_installments', 0)
+            raw_installment_amount = data.get('installment_amount', 0)
+            raw_due_day = data.get('due_day', 5)
 
-            if total_installments <= 0 or total_amount <= 0:
-                return jsonify({'error': 'กรุณากรอกข้อมูลยอดเงินและจำนวนงวดให้ถูกต้อง'}), 400
+            total_installments = int(raw_installments) if raw_installments else 0
+            due_day = int(raw_due_day) if raw_due_day else 5
 
-            installment_amount = total_amount / total_installments
+            if raw_installment_amount and float(raw_installment_amount) > 0:
+                installment_amount = float(raw_installment_amount)
+                total_amount = installment_amount * total_installments
+            else:
+                total_amount = float(raw_total) if raw_total else 0.0
+                installment_amount = total_amount / total_installments if total_installments > 0 else 0.0
+
+            if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
+                return jsonify({'error': 'กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง'}), 400
+
             contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
 
             cursor.execute("""

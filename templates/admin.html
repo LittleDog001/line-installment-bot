@@ -102,16 +102,32 @@
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
                             <input type="text" id="product_name" class="form-control" placeholder="เช่น iPhone 15 Pro Max" required>
                         </div>
+
+                        <!-- รูปแบบการระบุราคาและจำนวนงวด -->
+                        <div class="mb-2">
+                            <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-calculator me-1"></i>รูปแบบการตั้งราคางวด</label>
+                            <select id="calc_type" class="form-select mb-2" onchange="toggleCalcType()">
+                                <option value="auto">คำนวณยอดต่องวดอัตโนมัติ (ใส่ยอดรวม)</option>
+                                <option value="custom">กำหนดจำนวนงวดและราคาต่องวดเอง</option>
+                            </select>
+                        </div>
+
                         <div class="row g-2 mb-2">
-                            <div class="col-6">
+                            <div class="col-6" id="box_total_amount">
                                 <label class="form-label small text-muted">ยอดผ่อนรวม (บาท)</label>
-                                <input type="number" step="0.01" id="total_amount" class="form-control" placeholder="45000" required>
+                                <input type="number" step="0.01" id="total_amount" class="form-control" placeholder="45000" oninput="autoCalcInstallment()">
                             </div>
                             <div class="col-6">
                                 <label class="form-label small text-muted">จำนวนงวดทั้งหมด</label>
-                                <input type="number" id="total_installments" class="form-control" placeholder="12" required>
+                                <input type="number" id="total_installments" class="form-control" placeholder="12" required oninput="autoCalcInstallment()">
                             </div>
                         </div>
+
+                        <div class="mb-2" id="box_installment_amount" style="display: none;">
+                            <label class="form-label small text-muted">ราคาที่ต้องชำระแต่ละงวด (บาท)</label>
+                            <input type="number" step="0.01" id="installment_amount" class="form-control" placeholder="3750" oninput="autoCalcTotal()">
+                        </div>
+
                         <div class="mb-2">
                             <label class="form-label small text-muted"><i class="fa-regular fa-calendar-days text-primary me-1"></i>วันชำระประจำเดือน (วันที่ 1–31)</label>
                             <input type="number" min="1" max="31" id="due_day" class="form-control" placeholder="5" value="5" required>
@@ -217,7 +233,46 @@
             editModalObj = new bootstrap.Modal(document.getElementById('editModal'));
             historyModalObj = new bootstrap.Modal(document.getElementById('historyModal'));
             loadContracts();
+            toggleCalcType();
         });
+
+        function toggleCalcType() {
+            const calcType = document.getElementById('calc_type').value;
+            const boxTotal = document.getElementById('box_total_amount');
+            const boxInstallment = document.getElementById('box_installment_amount');
+
+            if (calcType === 'custom') {
+                boxInstallment.style.display = 'block';
+                document.getElementById('installment_amount').setAttribute('required', 'true');
+                document.getElementById('total_amount').removeAttribute('required');
+            } else {
+                boxInstallment.style.display = 'none';
+                document.getElementById('installment_amount').removeAttribute('required');
+                document.getElementById('total_amount').setAttribute('required', 'true');
+            }
+        }
+
+        function autoCalcTotal() {
+            const calcType = document.getElementById('calc_type').value;
+            if (calcType === 'custom') {
+                const count = parseFloat(document.getElementById('total_installments').value) || 0;
+                const pricePerMonth = parseFloat(document.getElementById('installment_amount').value) || 0;
+                if (count > 0 && pricePerMonth > 0) {
+                    document.getElementById('total_amount').value = (count * pricePerMonth).toFixed(2);
+                }
+            }
+        }
+
+        function autoCalcInstallment() {
+            const calcType = document.getElementById('calc_type').value;
+            if (calcType === 'auto') {
+                const total = parseFloat(document.getElementById('total_amount').value) || 0;
+                const count = parseFloat(document.getElementById('total_installments').value) || 0;
+                if (total > 0 && count > 0) {
+                    document.getElementById('installment_amount').value = (total / count).toFixed(2);
+                }
+            }
+        }
 
         document.getElementById('addContractForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -228,6 +283,7 @@
                 product_name: document.getElementById('product_name').value,
                 total_amount: document.getElementById('total_amount').value,
                 total_installments: document.getElementById('total_installments').value,
+                installment_amount: document.getElementById('installment_amount').value,
                 due_day: document.getElementById('due_day').value
             };
 
@@ -241,6 +297,7 @@
                 alert('เพิ่มสัญญาสำเร็จ');
                 document.getElementById('addContractForm').reset();
                 document.getElementById('due_day').value = 5;
+                toggleCalcType();
                 loadContracts();
             } else {
                 const err = await res.json();
