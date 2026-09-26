@@ -54,9 +54,13 @@ def init_db():
             total_amount NUMERIC(12, 2),
             total_installments INTEGER,
             installment_amount NUMERIC(12, 2),
+            due_day INTEGER DEFAULT 5,
             status VARCHAR(50) DEFAULT 'active',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+    ''')
+    cursor.execute('''
+        ALTER TABLE contracts ADD COLUMN IF NOT EXISTS due_day INTEGER DEFAULT 5;
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
@@ -91,6 +95,31 @@ def root_api_contracts():
 def root_api_contract_detail(contract_id):
     return process_contract_detail_api(contract_id)
 
+@app.route('/api/contracts/<int:contract_id>/status', methods=['PUT', 'POST'])
+def root_api_update_contract_status(contract_id):
+    data = request.get_json() or {}
+    new_status = data.get('status')
+    
+    if not new_status:
+        return jsonify({"success": False, "message": "Missing 'status' parameter"}), 400
+
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Database Connection Error: {str(e)}"}), 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (new_status, contract_id))
+        conn.commit()
+        return jsonify({"success": True, "message": f"Contract status updated to '{new_status}' successfully", "status": new_status})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
 @app.route('/api/payments/<contract_identifier>', methods=['GET'])
 def root_api_payments(contract_identifier):
     return process_payments_by_contract_api(contract_identifier)
@@ -102,6 +131,111 @@ def root_api_pay(contract_id):
 @app.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
 def root_api_unpay(contract_id):
     return unpay_contract_installment_api(contract_id)
+
+# --- Cron API สำหรับเช็กและแจ้งเตือนค่างวดผ่าน LINE ---
+@app.route('/api/cron/check-due-payments', methods=['GET', 'POST'])
+def trigger_due_notifications():
+    result = check_due_notifications()
+    return jsonify(result)
+
+def check_due_notifications():
+    try:
+        conn = get_db()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    today = datetime.datetime.now(TH_TZ).date()
+    current_day = today.day
+    notified_count = 0
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE status = 'active'")
+        contracts = cursor.fetchall()
+
+        for c in contracts:
+            line_user_id = c.get('line_user_id')
+            if not line_user_id:
+                continue
+
+            due_day = c.get('due_day') or 5
+            
+            # คำนวณวันกำหนดชำระของเดือนนี้
+            try:
+                due_date_this_month = datetime.date(today.year, today.month, due_day)
+            except ValueError:
+                # กรณีเดือนนั้นมีวันน้อยกว่า due_day (เช่น กุมภาพันธ์)
+                import calendar
+                last_day = calendar.monthrange(today.year, today.month)[1]
+                due_date_this_month = datetime.date(today.year, today.month, last_day)
+
+            days_diff = (due_date_this_month - today).days
+
+            # เช็กรายการชำระของสัญญานี้
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
+            payments = cursor.fetchall()
+
+            paid_count = sum(1 for p in payments if p['status'] == 'paid')
+            next_installment_no = paid_count + 1
+
+            if next_installment_no > c['total_installments']:
+                continue  # ชำระครบแล้ว
+
+            installment_amount = float(c['installment_amount'])
+
+            # เงื่อนไขการแจ้งเตือน: แจ้งเตือนล่วงหน้า 3 วัน หรือ แจ้งเตือนเมื่อถึงกำหนดวันนี้
+            if days_diff == 3:
+                msg = (
+                    f"⏰ แจ้งเตือนค่างวดผ่อนชำระ (ล่วงหน้า 3 วัน)\n"
+                    f"-------------------------------\n"
+                    f"📦 สินค้า: {c['product_name']}\n"
+                    f"🔢 งวดที่: {next_installment_no}/{c['total_installments']}\n"
+                    f"💰 ยอดชำระ: {installment_amount:,.2f} บาท\n"
+                    f"📅 กำหนดชำระวันที่: {due_date_this_month.strftime('%d/%m/%Y')}\n\n"
+                    f"พิมพ์ 'เช็คยอด' เพื่อดูรายละเอียดหรือกดชำระเงินได้เลยครับ"
+                )
+                send_line_push_notification(line_user_id, msg, next_installment_no, installment_amount)
+                notified_count += 1
+            elif days_diff == 0:
+                msg = (
+                    f"🔔 แจ้งเตือนครบกำหนดชำระค่างวดวันนี้!\n"
+                    f"-------------------------------\n"
+                    f"📦 สินค้า: {c['product_name']}\n"
+                    f"🔢 งวดที่: {next_installment_no}/{c['total_installments']}\n"
+                    f"💰 ยอดที่ต้องชำระ: {installment_amount:,.2f} บาท\n"
+                    f"📅 กำหนดชำระ: วันนี้ ({due_date_this_month.strftime('%d/%m/%Y')})\n\n"
+                    f"กรุณาชำระเงินภายในวันนี้เพื่อรักษาสิทธิ์ ขอบคุณครับ"
+                )
+                send_line_push_notification(line_user_id, msg, next_installment_no, installment_amount)
+                notified_count += 1
+            elif days_diff < 0 and days_diff >= -5:
+                msg = (
+                    f"⚠️ แจ้งเตือนเกินกำหนดชำระค่างวด ({abs(days_diff)} วัน)\n"
+                    f"-------------------------------\n"
+                    f"📦 สินค้า: {c['product_name']}\n"
+                    f"🔢 งวดที่ค้างชำระ: งวดที่ {next_installment_no}\n"
+                    f"💰 ยอดค้างชำระ: {installment_amount:,.2f} บาท\n\n"
+                    f"กรุณาดำเนินการชำระค่างวดโดยเร็วครับ"
+                )
+                send_line_push_notification(line_user_id, msg, next_installment_no, installment_amount)
+                notified_count += 1
+
+        return {"success": True, "notified_count": notified_count}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        cursor.close()
+        conn.close()
+
+def send_line_push_notification(user_id, text_msg, installment_no, amount):
+    try:
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label=f"ชำระงวดที่ {installment_no}", text=f"ชำระงวดที่ {installment_no}")),
+            QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด"))
+        ])
+        line_bot_api.push_message(user_id, TextSendMessage(text=text_msg, quick_reply=quick_reply))
+    except Exception as e:
+        print(f"Error sending Push Message to {user_id}: {e}")
 
 # --- Routes สำหรับแสดงผลบิลและใบสัญญา ---
 @app.route('/bill/<int:payment_id>')
@@ -158,7 +292,6 @@ def print_contract_doc(contract_identifier):
         contract['total_amount'] = float(contract['total_amount']) if contract['total_amount'] is not None else 0.0
         contract['installment_amount'] = float(contract['installment_amount']) if contract['installment_amount'] is not None else 0.0
         
-        # เพิ่ม monthly_amount และส่งตัวแปร c ให้ตรงตาม contract_document.html
         contract['monthly_amount'] = contract['installment_amount']
         if contract.get('created_at'):
             contract['created_at'] = str(contract['created_at'])
@@ -231,6 +364,7 @@ def send_contract_status(user_id, reply_token):
         remaining_count = contract['total_installments'] - paid_count
         remaining_balance = float(remaining_count * contract['installment_amount'])
         discounted_close_amount = remaining_balance * 0.85 if remaining_balance > 0 else 0
+        due_day = contract.get('due_day') or 5
 
         footer_contents = []
         if remaining_count > 0:
@@ -276,6 +410,7 @@ def send_contract_status(user_id, reply_token):
                         {"type": "text", "text": f"ผู้กู้/ผู้ผ่อน: {contract['customer_name']}", "size": "sm"},
                         {"type": "text", "text": f"เลขบัตรประชาชน: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
                         {"type": "text", "text": f"งวดทั้งหมด: {contract['total_installments']} งวด", "size": "sm"},
+                        {"type": "text", "text": f"📅 กำหนดชำระทุกวันที่: {due_day} ของเดือน", "size": "sm", "color": "#2980b9", "weight": "bold"},
                         {"type": "text", "text": f"ชำระแล้ว: {paid_count} งวด", "size": "sm", "color": "#27ae60"},
                         {"type": "text", "text": f"คงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)", "size": "sm", "color": "#e74c3c"},
                         {"type": "text", "text": f"🔥 ยอดปิดบัญชีทันที (ลด 15%): {discounted_close_amount:,.2f} บาท", "size": "sm", "weight": "bold", "color": "#d35400"}
