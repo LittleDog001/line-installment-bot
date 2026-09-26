@@ -116,6 +116,10 @@
                                 <input type="number" id="total_installments" class="form-control" placeholder="12" required>
                             </div>
                         </div>
+                        <div class="mb-2">
+                            <label class="form-label small text-muted"><i class="fa-regular fa-calendar-days text-primary me-1"></i>วันชำระประจำเดือน (วันที่ 1–31)</label>
+                            <input type="number" min="1" max="31" id="due_day" class="form-control" placeholder="5" value="5" required>
+                        </div>
                         <button type="submit" class="btn btn-primary w-100 fw-bold mt-2"><i class="fa-solid fa-save me-1"></i> บันทึกสัญญา</button>
                     </form>
                 </div>
@@ -134,7 +138,8 @@
                                 <tr class="small text-muted">
                                     <th>สัญญา/ลูกค้า</th>
                                     <th>สินค้า</th>
-                                    <th>งวดชำระ</th>
+                                    <th>งวดชำระ/กำหนด</th>
+                                    <th>วันที่ทำสัญญา</th>
                                     <th>สถานะ</th>
                                     <th class="text-center">จัดการงวด</th>
                                     <th class="text-center">เครื่องมือ</th>
@@ -177,9 +182,13 @@
                             <label class="form-label small text-muted">เบอร์โทรศัพท์</label>
                             <input type="text" id="edit_phone" class="form-control" required>
                         </div>
-                        <div class="mb-3">
+                        <div class="mb-2">
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
                             <input type="text" id="edit_product_name" class="form-control" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small text-muted"><i class="fa-regular fa-calendar-days text-primary me-1"></i>วันชำระประจำเดือน (วันที่ 1–31)</label>
+                            <input type="number" min="1" max="31" id="edit_due_day" class="form-control" required>
                         </div>
                         <button type="submit" class="btn btn-success w-100 fw-bold"><i class="fa-solid fa-circle-check me-1"></i> บันทึกการแก้ไข</button>
                     </form>
@@ -227,7 +236,8 @@
                 phone: document.getElementById('phone').value,
                 product_name: document.getElementById('product_name').value,
                 total_amount: document.getElementById('total_amount').value,
-                total_installments: document.getElementById('total_installments').value
+                total_installments: document.getElementById('total_installments').value,
+                due_day: document.getElementById('due_day').value
             };
 
             const res = await fetch('/api/contracts', {
@@ -239,6 +249,7 @@
             if (res.ok) {
                 alert('เพิ่มสัญญาสำเร็จ');
                 document.getElementById('addContractForm').reset();
+                document.getElementById('due_day').value = 5;
                 loadContracts();
             } else {
                 const err = await res.json();
@@ -268,6 +279,8 @@
                     const phone = c.phone || '';
                     const productName = c.product_name || '';
                     const idCard = c.id_card ? ` (ปชช: ${c.id_card})` : '';
+                    const dueDay = c.due_day || 5;
+                    const createdAtFormatted = c.created_at_formatted || '-';
 
                     totalPaid += (paidCount * installmentAmount);
 
@@ -283,7 +296,11 @@
                             <small class="text-muted">฿${installmentAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})}/งวด (รวม ฿${totalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})})</small>
                         </td>
                         <td>
-                            <span class="badge bg-primary fs-6">${paidCount} / ${c.total_installments}</span>
+                            <span class="badge bg-primary fs-6 mb-1">${paidCount} / ${c.total_installments}</span><br>
+                            <small class="text-muted"><i class="fa-regular fa-calendar-check text-success me-1"></i>ทุกวันที่ ${dueDay}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted"><i class="fa-regular fa-clock me-1"></i>${createdAtFormatted}</small>
                         </td>
                         <td>
                             <span class="badge ${isStatusActive ? 'badge-status-active' : 'badge-status-cancelled'}">
@@ -359,6 +376,7 @@
                 document.getElementById('edit_id_card').value = c.id_card || '';
                 document.getElementById('edit_phone').value = c.phone || '';
                 document.getElementById('edit_product_name').value = c.product_name || '';
+                document.getElementById('edit_due_day').value = c.due_day || 5;
 
                 if (editModalObj) editModalObj.show();
             } catch (err) {
@@ -374,7 +392,8 @@
                 customer_name: document.getElementById('edit_customer_name').value,
                 id_card: document.getElementById('edit_id_card').value,
                 phone: document.getElementById('edit_phone').value,
-                product_name: document.getElementById('edit_product_name').value
+                product_name: document.getElementById('edit_product_name').value,
+                due_day: document.getElementById('edit_due_day').value
             };
 
             const res = await fetch(`/api/contracts/${id}`, {

@@ -36,6 +36,14 @@ def index():
             c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
             c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
 
+            # แปลงวันที่ทำสัญญาและการดึง due_day
+            c_dict['due_day'] = c_dict.get('due_day', 5) or 5
+            if c_dict.get('created_at'):
+                c_dict['created_at_formatted'] = c_dict['created_at'].strftime('%d/%m/%Y %H:%M')
+                c_dict['created_at'] = str(c_dict['created_at'])
+            else:
+                c_dict['created_at_formatted'] = '-'
+
             paid_count = sum(1 for p in payments if p['status'] == 'paid')
             remaining_count = c_dict['total_installments'] - paid_count
             remaining_amount = float(remaining_count * c_dict['installment_amount'])
@@ -72,9 +80,11 @@ def create_contract():
         
         raw_total = request.form.get('total_amount', 0)
         raw_installments = request.form.get('total_installments', 0)
+        raw_due_day = request.form.get('due_day', 5)
 
         total_amount = float(raw_total) if raw_total else 0.0
         total_installments = int(raw_installments) if raw_installments else 0
+        due_day = int(raw_due_day) if raw_due_day else 5
 
         if total_installments <= 0 or total_amount <= 0:
             return "กรุณากรอกยอดเงินรวมและจำนวนงวดให้ถูกต้อง (ต้องมากกว่า 0)", 400
@@ -85,13 +95,13 @@ def create_contract():
         cursor.execute("""
             INSERT INTO contracts (
                 contract_number, line_user_id, customer_name, id_card, phone, 
-                product_name, total_amount, total_installments, installment_amount, status
+                product_name, total_amount, total_installments, installment_amount, due_day, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
             RETURNING id
         """, (
             contract_number, line_user_id, customer_name, id_card, phone, 
-            product_name, total_amount, total_installments, installment_amount
+            product_name, total_amount, total_installments, installment_amount, due_day
         ))
         
         contract_row = cursor.fetchone()
@@ -131,6 +141,7 @@ def process_contracts_api():
             
             total_amount = float(data.get('total_amount', 0))
             total_installments = int(data.get('total_installments', 0))
+            due_day = int(data.get('due_day', 5))
 
             if total_installments <= 0 or total_amount <= 0:
                 return jsonify({'error': 'กรุณากรอกข้อมูลยอดเงินและจำนวนงวดให้ถูกต้อง'}), 400
@@ -141,13 +152,13 @@ def process_contracts_api():
             cursor.execute("""
                 INSERT INTO contracts (
                     contract_number, line_user_id, customer_name, id_card, phone, 
-                    product_name, total_amount, total_installments, installment_amount, status
+                    product_name, total_amount, total_installments, installment_amount, due_day, status
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
                 RETURNING id
             """, (
                 contract_number, line_user_id, customer_name, id_card, phone, 
-                product_name, total_amount, total_installments, installment_amount
+                product_name, total_amount, total_installments, installment_amount, due_day
             ))
             
             contract_row = cursor.fetchone()
@@ -173,6 +184,13 @@ def process_contracts_api():
             
             c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
             c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
+
+            c_dict['due_day'] = c_dict.get('due_day', 5) or 5
+            if c_dict.get('created_at'):
+                c_dict['created_at_formatted'] = c_dict['created_at'].strftime('%d/%m/%Y %H:%M')
+                c_dict['created_at'] = str(c_dict['created_at'])
+            else:
+                c_dict['created_at_formatted'] = '-'
 
             paid_count = sum(1 for p in payments if p['status'] == 'paid')
             remaining_count = c_dict['total_installments'] - paid_count
@@ -220,12 +238,13 @@ def process_contract_detail_api(contract_id):
             id_card = (data.get('id_card') or '').strip()
             phone = (data.get('phone') or '').strip()
             product_name = (data.get('product_name') or '').strip()
+            due_day = int(data.get('due_day', 5))
 
             cursor.execute("""
                 UPDATE contracts 
-                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s
+                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s, due_day = %s
                 WHERE id = %s
-            """, (line_user_id, customer_name, id_card, phone, product_name, contract_id))
+            """, (line_user_id, customer_name, id_card, phone, product_name, due_day, contract_id))
 
             conn.commit()
             return jsonify({'message': 'แก้ไขสัญญาสำเร็จ', 'contract_id': contract_id})
@@ -241,6 +260,13 @@ def process_contract_detail_api(contract_id):
 
         c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
         c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
+
+        c_dict['due_day'] = c_dict.get('due_day', 5) or 5
+        if c_dict.get('created_at'):
+            c_dict['created_at_formatted'] = c_dict['created_at'].strftime('%d/%m/%Y %H:%M')
+            c_dict['created_at'] = str(c_dict['created_at'])
+        else:
+            c_dict['created_at_formatted'] = '-'
 
         paid_count = sum(1 for p in payments if p['status'] == 'paid')
         remaining_count = c_dict['total_installments'] - paid_count
