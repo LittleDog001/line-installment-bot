@@ -1,16 +1,18 @@
 import os
+import io
 import datetime
 import urllib.parse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
-from flask import Flask, request, abort, render_template, jsonify
+from flask import Flask, request, abort, render_template, jsonify, send_file
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, QuickReply, QuickReplyButton, MessageAction
+    MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, ImageSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
 from promptpay import qrcode
+import qrcode as qrcode_lib
 
 from admin_routes import (
     admin_bp, process_contracts_api, process_contract_detail_api, 
@@ -86,6 +88,19 @@ except Exception as e:
 @app.route("/")
 def home():
     return "LINE Installment Bot is Running with PostgreSQL"
+
+# --- API Route สำหรับสร้างภาพ QR Code ตรงผ่าน Flask ของเราเอง (การันตี LINE โหลดภาพได้แน่นอน) ---
+@app.route('/qr-code/<promptpay>/<float:amount>')
+def generate_qr_code_image(promptpay, amount):
+    try:
+        payload = qrcode.generate_payload(promptpay, amount)
+        img = qrcode_lib.make(payload)
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        return send_file(img_io, mimetype='image/png')
+    except Exception as e:
+        return f"QR Generation Error: {str(e)}", 500
 
 # --- Global API Routes สำหรับ JavaScript หน้าบ้านเรียกใช้งานตรงๆ (/api/...) ---
 @app.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
@@ -506,28 +521,16 @@ def send_payment_qr(user_id, installment_no, reply_token):
         promptpay_number = PROMPTPAY_ID.strip() if PROMPTPAY_ID else '0800000000'
 
         try:
-            qr_payload = qrcode.generate_payload(promptpay_number, amount)
-            encoded_payload = urllib.parse.quote(qr_payload)
-            qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_payload}"
+            base_url = request.host_url.rstrip('/')
+            qr_image_url = f"{base_url}/qr-code/{promptpay_number}/{amount}"
 
             line_bot_api.reply_message(
                 reply_token,
                 [
                     TextSendMessage(text=f"📌 สแกนเพื่อชำระค่างวดที่ {installment_no}\n📦 สินค้า: {contract['product_name']}\n💰 ยอดชำระ: {amount:,.2f} บาท\n📱 PromptPay: {promptpay_number}"),
-                    FlexSendMessage(
-                        alt_text=f"QR Code ชำระเงินงวดที่ {installment_no}",
-                        contents={
-                            "type": "bubble",
-                            "body": {
-                                "type": "box",
-                                "layout": "vertical",
-                                "contents": [
-                                    {"type": "text", "text": f"QR Code ชำระเงินงวดที่ {installment_no}", "weight": "bold", "align": "center", "size": "md", "color": "#1DB446"},
-                                    {"type": "text", "text": f"ยอดชำระ {amount:,.2f} บาท", "align": "center", "size": "sm", "color": "#555555", "margin": "xs"},
-                                    {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
-                                ]
-                            }
-                        }
+                    ImageSendMessage(
+                        original_content_url=qr_image_url,
+                        preview_image_url=qr_image_url
                     )
                 ]
             )
@@ -576,9 +579,8 @@ def send_early_close_qr(user_id, reply_token):
         final_pay_amount = remaining_balance - discount_amount
         promptpay_number = PROMPTPAY_ID.strip() if PROMPTPAY_ID else '0800000000'
 
-        qr_payload = qrcode.generate_payload(promptpay_number, final_pay_amount)
-        encoded_payload = urllib.parse.quote(qr_payload)
-        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_payload}"
+        base_url = request.host_url.rstrip('/')
+        qr_image_url = f"{base_url}/qr-code/{promptpay_number}/{final_pay_amount}"
 
         msg = (
             f"🎉 ข้อเสนอพิเศษปิดยอดก่อนกำหนด\n"
@@ -589,39 +591,18 @@ def send_early_close_qr(user_id, reply_token):
             f"📱 หมายเลขพร้อมเพย์: {promptpay_number}"
         )
 
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="ยืนยันปิดยอดชำระแล้ว", text="ยืนยันปิดยอดชำระแล้ว"))
+        ])
+
         line_bot_api.reply_message(
             reply_token,
             [
                 TextSendMessage(text=msg),
-                FlexSendMessage(
-                    alt_text="QR Code ปิดยอดก่อนกำหนด",
-                    contents={
-                        "type": "bubble",
-                        "body": {
-                            "type": "box",
-                            "layout": "vertical",
-                            "contents": [
-                                {"type": "text", "text": "สแกนชำระปิดยอด (ลด 15%)", "weight": "bold", "align": "center", "color": "#e67e22"},
-                                {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
-                            ]
-                        },
-                        "footer": {
-                            "type": "box",
-                            "layout": "vertical",
-                            "contents": [
-                                {
-                                    "type": "button",
-                                    "style": "primary",
-                                    "color": "#e67e22",
-                                    "action": {
-                                        "type": "message",
-                                        "label": "ยืนยันปิดยอด (หลังชำระเงิน)",
-                                        "text": "ยืนยันปิดยอดชำระแล้ว"
-                                    }
-                                }
-                            ]
-                        }
-                    }
+                ImageSendMessage(
+                    original_content_url=qr_image_url,
+                    preview_image_url=qr_image_url,
+                    quick_reply=quick_reply
                 )
             ]
         )
