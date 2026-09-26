@@ -89,7 +89,6 @@ except Exception as e:
 def home():
     return "LINE Installment Bot is Running with PostgreSQL"
 
-# --- API Route สำหรับสร้างภาพ QR Code ตรงผ่าน Flask ของเราเอง (การันตี LINE โหลดภาพได้แน่นอน) ---
 @app.route('/qr-code/<promptpay>/<float:amount>')
 def generate_qr_code_image(promptpay, amount):
     try:
@@ -102,7 +101,6 @@ def generate_qr_code_image(promptpay, amount):
     except Exception as e:
         return f"QR Generation Error: {str(e)}", 500
 
-# --- Global API Routes สำหรับ JavaScript หน้าบ้านเรียกใช้งานตรงๆ (/api/...) ---
 @app.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def root_api_contracts():
     return process_contracts_api()
@@ -128,6 +126,21 @@ def root_api_update_contract_status(contract_id):
     try:
         cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (new_status, contract_id))
         conn.commit()
+
+        # เพิ่มระบบ: แจ้งเตือนไปยังลูกค้าผ่าน LINE เมื่อเปลี่ยนสถานะเป็น cancelled
+        if new_status.lower() == 'cancelled':
+            cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+            contract = cursor.fetchone()
+            if contract and contract.get('line_user_id'):
+                cancel_msg = (
+                    f"⚠️ แจ้งเตือนสถานะสัญญาของคุณ\n"
+                    f"-------------------------------\n"
+                    f"📦 สินค้า: {contract['product_name']}\n"
+                    f"เลขที่สัญญา: {contract['contract_number']}\n\n"
+                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก** จากทางระบบเรียบร้อยแล้วครับ 🙏"
+                )
+                send_simple_push_notification(contract['line_user_id'], cancel_msg)
+
         return jsonify({"success": True, "message": f"Contract status updated to '{new_status}' successfully", "status": new_status})
     except Exception as e:
         conn.rollback()
@@ -166,7 +179,6 @@ def root_api_close_contract_early(contract_id):
         cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
         conn.commit()
 
-        # ส่งข้อความขอบคุณไปยัง LINE ของลูกค้า
         if contract.get('line_user_id'):
             thank_msg = (
                 f"🎉 ขอขอบพระคุณเป็นอย่างยิ่งครับ!\n"
@@ -197,7 +209,6 @@ def root_api_pay(contract_id):
 def root_api_unpay(contract_id):
     return unpay_contract_installment_api(contract_id)
 
-# --- Cron API สำหรับเช็กและแจ้งเตือนค่างวดผ่าน LINE ---
 @app.route('/api/cron/check-due-payments', methods=['GET', 'POST'])
 def trigger_due_notifications():
     result = check_due_notifications()
@@ -303,7 +314,6 @@ def send_line_push_notification(user_id, text_msg, installment_no, amount):
     except Exception as e:
         print(f"Error sending Push Message to {user_id}: {e}")
 
-# --- Routes สำหรับแสดงผลบิลและใบสัญญา ---
 @app.route('/bill/<int:payment_id>')
 @app.route('/admin/bill/<int:payment_id>')
 def print_bill_main(payment_id):
@@ -395,7 +405,6 @@ def handle_message(event):
     elif user_text in ["ปิดยอดก่อนกำหนด", "ปิดยอด"]:
         send_early_close_qr(user_id, event.reply_token)
     else:
-        # ระบบค้นหาสัญญาด้วย เบอร์โทร บัตรประชาชน หรือ ชื่อ-สกุล
         search_contract_and_reply(user_id, user_text, event.reply_token)
 
 def search_contract_and_reply(user_id, search_term, reply_token):
@@ -407,7 +416,6 @@ def search_contract_and_reply(user_id, search_term, reply_token):
 
     cursor = conn.cursor()
     try:
-        # ลบขีดหรือช่องว่างกรณีค้นหาเบอร์หรือบัตรประชาชน
         clean_term = search_term.replace('-', '').replace(' ', '')
 
         cursor.execute("""
@@ -422,7 +430,6 @@ def search_contract_and_reply(user_id, search_term, reply_token):
         contract = cursor.fetchone()
 
         if contract:
-            # ทำการผูก line_user_id อัตโนมัติหากยังไม่ได้ผูก
             if not contract['line_user_id']:
                 cursor.execute("UPDATE contracts SET line_user_id = %s WHERE id = %s", (user_id, contract['id']))
                 conn.commit()
@@ -451,7 +458,7 @@ def send_contract_status(user_id, reply_token):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early') ORDER BY id DESC LIMIT 1", (user_id,))
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early', 'cancelled') ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
 
         if not contract:
@@ -485,8 +492,17 @@ def render_flex_contract(contract, reply_token):
 
         footer_contents = []
         is_closed = contract['status'] in ['closed', 'closed_early'] or remaining_count == 0
+        is_cancelled = contract['status'] == 'cancelled'
 
-        if not is_closed:
+        if is_cancelled:
+            footer_contents.append({
+                "type": "text",
+                "text": "❌ สัญญานี้ถูกยกเลิกแล้ว",
+                "align": "center",
+                "color": "#e74c3c",
+                "weight": "bold"
+            })
+        elif not is_closed:
             footer_contents.append({
                 "type": "button",
                 "style": "primary",
@@ -516,6 +532,12 @@ def render_flex_contract(contract, reply_token):
                 "weight": "bold"
             })
 
+        status_display = "🟢 กำลังผ่อนชำระ"
+        if is_cancelled:
+            status_display = "❌ ยกเลิกสัญญาแล้ว"
+        elif is_closed:
+            status_display = "🔒 ปิดยอดแล้ว"
+
         flex_contents = {
             "type": "bubble",
             "body": {
@@ -534,7 +556,7 @@ def render_flex_contract(contract, reply_token):
                         {"type": "text", "text": f"📅 กำหนดชำระทุกวันที่: {due_day} ของเดือน", "size": "sm", "color": "#2980b9", "weight": "bold"},
                         {"type": "text", "text": f"ชำระแล้ว: {paid_count} งวด", "size": "sm", "color": "#27ae60"},
                         {"type": "text", "text": f"คงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)", "size": "sm", "color": "#e74c3c"},
-                        {"type": "text", "text": f"สถานะ: {'🔒 ปิดยอดแล้ว' if is_closed else '🟢 กำลังผ่อนชำระ'}", "size": "sm", "weight": "bold", "color": "#27ae60" if is_closed else "#1DB446"},
+                        {"type": "text", "text": f"สถานะ: {status_display}", "size": "sm", "weight": "bold", "color": "#e74c3c" if is_cancelled else ("#27ae60" if is_closed else "#1DB446")},
                         {"type": "text", "text": f"🔥 ยอดปิดบัญชีทันที (ลด 15%): {discounted_close_amount:,.2f} บาท", "size": "sm", "weight": "bold", "color": "#d35400"}
                     ]}
                 ]
