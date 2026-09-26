@@ -11,7 +11,10 @@ from linebot.models import (
 )
 from promptpay import qrcode
 
-from admin_routes import admin_bp
+from admin_routes import (
+    admin_bp, process_contracts_api, process_contract_detail_api, 
+    process_payments_by_contract_api, pay_contract_installment_api, unpay_contract_installment_api
+)
 
 app = Flask(__name__)
 app.register_blueprint(admin_bp, url_prefix='/admin')
@@ -76,7 +79,28 @@ except Exception as e:
 def home():
     return "LINE Installment Bot is Running with PostgreSQL"
 
-# Route หลักสำหรับดูบิล และดูใบสัญญา (รองรับทั้งเปิดผ่าน /bill, /admin/bill และอื่นๆ)
+# --- Global API Routes สำหรับ JavaScript หน้าบ้านเรียกใช้งานตรงๆ (/api/...) ---
+@app.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
+def root_api_contracts():
+    return process_contracts_api()
+
+@app.route('/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
+def root_api_contract_detail(contract_id):
+    return process_contract_detail_api(contract_id)
+
+@app.route('/api/payments/<contract_identifier>', methods=['GET'])
+def root_api_payments(contract_identifier):
+    return process_payments_by_contract_api(contract_identifier)
+
+@app.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+def root_api_pay(contract_id):
+    return pay_contract_installment_api(contract_id)
+
+@app.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+def root_api_unpay(contract_id):
+    return unpay_contract_installment_api(contract_id)
+
+# --- Routes สำหรับแสดงผลบิลและใบสัญญา ---
 @app.route('/bill/<int:payment_id>')
 @app.route('/admin/bill/<int:payment_id>')
 def print_bill_main(payment_id):
@@ -123,20 +147,6 @@ def print_contract_doc(contract_identifier):
     finally:
         cursor.close()
         conn.close()
-
-# API ชำระงวด (+งวด) - Global Route
-@app.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
-@app.route('/admin/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
-def global_pay_contract_installment_api(contract_id):
-    from admin_routes import pay_contract_installment_api
-    return pay_contract_installment_api(contract_id)
-
-# API ยกเลิกการชำระ (-งวด) - Global Route
-@app.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
-@app.route('/admin/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
-def global_unpay_contract_installment_api(contract_id):
-    from admin_routes import unpay_contract_installment_api
-    return unpay_contract_installment_api(contract_id)
 
 @app.route("/callback", methods=['POST'])
 def callback():

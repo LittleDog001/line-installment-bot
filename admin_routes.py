@@ -160,8 +160,7 @@ def close_contract_early(contract_id):
         cursor.close()
         conn.close()
 
-@admin_bp.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
-def get_contracts_api():
+def process_contracts_api():
     if not DATABASE_URL:
         return jsonify({'error': 'DATABASE_URL is not set'}), 500
 
@@ -169,7 +168,7 @@ def get_contracts_api():
     cursor = conn.cursor()
     try:
         if request.method == 'POST':
-            data = request.get_json() if request.is_json else request.form
+            data = request.get_json(silent=True) or request.form
             line_user_id = (data.get('line_user_id') or '').strip()
             customer_name = (data.get('customer_name') or '').strip()
             id_card = (data.get('id_card') or '').strip()
@@ -241,13 +240,12 @@ def get_contracts_api():
         cursor.close()
         conn.close()
 
+@admin_bp.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 @admin_bp.route('/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
-def get_contracts_api_alt():
-    return get_contracts_api()
+def get_contracts_api():
+    return process_contracts_api()
 
-@admin_bp.route('/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
-@admin_bp.route('/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
-def get_contract_detail_api(contract_id):
+def process_contract_detail_api(contract_id):
     if not DATABASE_URL:
         return jsonify({'error': 'DATABASE_URL is not set'}), 500
 
@@ -261,7 +259,7 @@ def get_contract_detail_api(contract_id):
             return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
 
         if request.method in ['PUT', 'POST']:
-            data = request.get_json() if request.is_json else request.form
+            data = request.get_json(silent=True) or request.form
             line_user_id = (data.get('line_user_id') or '').strip()
             customer_name = (data.get('customer_name') or '').strip()
             id_card = (data.get('id_card') or '').strip()
@@ -308,9 +306,12 @@ def get_contract_detail_api(contract_id):
         cursor.close()
         conn.close()
 
-@admin_bp.route('/api/payments/<contract_identifier>', methods=['GET'])
-@admin_bp.route('/payments/<contract_identifier>', methods=['GET'])
-def get_payments_by_contract_api(contract_identifier):
+@admin_bp.route('/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
+@admin_bp.route('/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
+def get_contract_detail_api(contract_id):
+    return process_contract_detail_api(contract_id)
+
+def process_payments_by_contract_api(contract_identifier):
     if not DATABASE_URL:
         return jsonify({'error': 'DATABASE_URL is not set'}), 500
 
@@ -329,9 +330,11 @@ def get_payments_by_contract_api(contract_identifier):
         cursor.close()
         conn.close()
 
-# API ชำระงวด (+งวด)
-@admin_bp.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
-@admin_bp.route('/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+@admin_bp.route('/api/payments/<contract_identifier>', methods=['GET'])
+@admin_bp.route('/payments/<contract_identifier>', methods=['GET'])
+def get_payments_by_contract_api(contract_identifier):
+    return process_payments_by_contract_api(contract_identifier)
+
 def pay_contract_installment_api(contract_id):
     if not DATABASE_URL:
         return jsonify({'error': 'DATABASE_URL is not set'}), 500
@@ -362,7 +365,6 @@ def pay_contract_installment_api(contract_id):
 
         conn.commit()
 
-        # คำนวณสรุปข้อมูลใหม่เพื่อส่งกลับไปอัปเดตหน้าบ้านทันที
         cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
         contract = cursor.fetchone()
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
@@ -386,9 +388,11 @@ def pay_contract_installment_api(contract_id):
         cursor.close()
         conn.close()
 
-# API ยกเลิกการชำระ (-งวด)
-@admin_bp.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
-@admin_bp.route('/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+@admin_bp.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+def handle_pay_contract_installment_api(contract_id):
+    return pay_contract_installment_api(contract_id)
+
 def unpay_contract_installment_api(contract_id):
     if not DATABASE_URL:
         return jsonify({'error': 'DATABASE_URL is not set'}), 500
@@ -415,7 +419,6 @@ def unpay_contract_installment_api(contract_id):
             WHERE id = %s
         """, (payment['id'],))
 
-        # หากสัญญาเคยขึ้น closed_early ให้ปรับกลับเป็น active
         cursor.execute("UPDATE contracts SET status = 'active' WHERE id = %s AND status = 'closed_early'", (contract_id,))
 
         conn.commit()
@@ -441,6 +444,11 @@ def unpay_contract_installment_api(contract_id):
     finally:
         cursor.close()
         conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+def handle_unpay_contract_installment_api(contract_id):
+    return unpay_contract_installment_api(contract_id)
 
 @admin_bp.route('/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
 @admin_bp.route('/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
