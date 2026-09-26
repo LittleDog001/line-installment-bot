@@ -160,7 +160,7 @@ def close_contract_early(contract_id):
         cursor.close()
         conn.close()
 
-@admin_bp.route('/api/contracts', methods=['GET'])
+@admin_bp.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def get_contracts_api():
     if not DATABASE_URL:
         return jsonify({'error': 'DATABASE_URL is not set'}), 500
@@ -168,6 +168,47 @@ def get_contracts_api():
     conn = get_db()
     cursor = conn.cursor()
     try:
+        if request.method == 'POST':
+            data = request.get_json() if request.is_json else request.form
+            line_user_id = (data.get('line_user_id') or '').strip()
+            customer_name = (data.get('customer_name') or '').strip()
+            id_card = (data.get('id_card') or '').strip()
+            phone = (data.get('phone') or '').strip()
+            product_name = (data.get('product_name') or '').strip()
+            
+            total_amount = float(data.get('total_amount', 0))
+            total_installments = int(data.get('total_installments', 0))
+
+            if total_installments <= 0 or total_amount <= 0:
+                return jsonify({'error': 'กรุณากรอกข้อมูลยอดเงินและจำนวนงวดให้ถูกต้อง'}), 400
+
+            installment_amount = total_amount / total_installments
+            contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
+
+            cursor.execute("""
+                INSERT INTO contracts (
+                    contract_number, line_user_id, customer_name, id_card, phone, 
+                    product_name, total_amount, total_installments, installment_amount, status
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
+                RETURNING id
+            """, (
+                contract_number, line_user_id, customer_name, id_card, phone, 
+                product_name, total_amount, total_installments, installment_amount
+            ))
+            
+            contract_row = cursor.fetchone()
+            contract_id = contract_row['id']
+
+            for i in range(1, total_installments + 1):
+                cursor.execute("""
+                    INSERT INTO payments (contract_id, installment_no, amount, status)
+                    VALUES (%s, %s, %s, 'pending')
+                """, (contract_id, i, installment_amount))
+
+            conn.commit()
+            return jsonify({'message': 'บันทึกสัญญาสำเร็จ', 'contract_id': contract_id}), 201
+
         cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
         contracts = cursor.fetchall()
         
@@ -193,10 +234,13 @@ def get_contracts_api():
             contract_list.append(c_dict)
 
         return jsonify(contract_list)
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
     finally:
         cursor.close()
         conn.close()
 
-@admin_bp.route('/contracts', methods=['GET'])
+@admin_bp.route('/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def get_contracts_api_alt():
     return get_contracts_api()
