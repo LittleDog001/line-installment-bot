@@ -159,6 +159,70 @@ def global_get_contracts_api():
         cursor.close()
         conn.close()
 
+# API จัดการสัญญาเป็นรายรายการ (ดึงข้อมูล/แก้ไข/ลบ)
+@app.route('/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
+@app.route('/admin/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
+def global_get_contract_detail_api(contract_id):
+    if not DATABASE_URL:
+        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+
+        if request.method in ['PUT', 'POST']:
+            data = request.get_json() if request.is_json else request.form
+            line_user_id = (data.get('line_user_id') or '').strip()
+            customer_name = (data.get('customer_name') or '').strip()
+            id_card = (data.get('id_card') or '').strip()
+            phone = (data.get('phone') or '').strip()
+            product_name = (data.get('product_name') or '').strip()
+
+            cursor.execute("""
+                UPDATE contracts 
+                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s
+                WHERE id = %s
+            """, (line_user_id, customer_name, id_card, phone, product_name, contract_id))
+
+            conn.commit()
+            return jsonify({'message': 'แก้ไขสัญญาสำเร็จ', 'contract_id': contract_id})
+
+        elif request.method == 'DELETE':
+            cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
+            conn.commit()
+            return jsonify({'message': 'ลบสัญญาสำเร็จ', 'contract_id': contract_id})
+
+        c_dict = dict(contract)
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
+        payments = [dict(p) for p in cursor.fetchall()]
+
+        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
+        c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
+
+        paid_count = sum(1 for p in payments if p['status'] == 'paid')
+        remaining_count = c_dict['total_installments'] - paid_count
+        remaining_amount = float(remaining_count * c_dict['installment_amount'])
+        close_with_discount = remaining_amount * 0.85
+
+        c_dict['payments'] = payments
+        c_dict['paid_count'] = paid_count
+        c_dict['remaining_count'] = remaining_count
+        c_dict['remaining_amount'] = remaining_amount
+        c_dict['close_with_discount'] = close_with_discount
+
+        return jsonify(c_dict)
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers.get('X-Line-Signature')
