@@ -15,6 +15,9 @@ def get_db():
 
 @admin_bp.route('/')
 def index():
+    if not DATABASE_URL:
+        return "DATABASE_URL is not set", 500
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
@@ -26,9 +29,13 @@ def index():
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
         payments = cursor.fetchall()
         
+        # แปลง Decimal เป็น float ป้องกัน Type Error
+        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] else 0.0
+        c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] else 0.0
+
         paid_count = sum(1 for p in payments if p['status'] == 'paid')
-        remaining_count = c['total_installments'] - paid_count
-        remaining_amount = float(remaining_count * c['installment_amount'])
+        remaining_count = c_dict['total_installments'] - paid_count
+        remaining_amount = float(remaining_count * c_dict['installment_amount'])
         close_with_discount = remaining_amount * 0.85
         
         c_dict['payments'] = payments
@@ -44,6 +51,7 @@ def index():
 
 @admin_bp.route('/contract/create', methods=['POST'])
 def create_contract():
+    conn = None
     try:
         line_user_id = request.form.get('line_user_id', '').strip()
         customer_name = request.form.get('customer_name', '').strip()
@@ -86,6 +94,9 @@ def create_contract():
         return redirect(url_for('admin.index'))
 
     except Exception as e:
+        if conn:
+            conn.rollback()
+            conn.close()
         return f"เกิดข้อผิดพลาดในการบันทึกสัญญา: {str(e)}", 500
 
 @admin_bp.route('/payment/<int:payment_id>/confirm', methods=['POST'])
