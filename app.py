@@ -484,44 +484,62 @@ def render_flex_contract(contract, reply_token):
 def send_payment_qr(user_id, installment_no, reply_token):
     try:
         conn = get_db()
-    except Exception:
+    except Exception as e:
+        print(f"Database error in send_payment_qr: {e}")
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล กรุณาลองใหม่อีกครั้ง"))
         return
 
     cursor = conn.cursor()
     try:
+        # ค้นหาจาก line_user_id หรือดึงสัญญาล่าสุดของลูกค้า
         cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญา"))
+            line_bot_api.reply_message(
+                reply_token, 
+                TextSendMessage(text="ไม่พบข้อมูลสัญญาของคุณ กรุณาพิมพ์ เบอร์โทรศัพท์ หรือ เลขบัตรประชาชน เพื่อค้นหาและผูกสัญญาบัญชีก่อนครับ")
+            )
             return
 
         amount = float(contract['installment_amount'])
-        qr_payload = qrcode.generate_payload(PROMPTPAY_ID, amount)
-        
-        encoded_payload = urllib.parse.quote(qr_payload)
-        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_payload}"
+        promptpay_number = PROMPTPAY_ID.strip() if PROMPTPAY_ID else '0800000000'
 
-        line_bot_api.reply_message(
-            reply_token,
-            [
-                TextSendMessage(text=f"สแกนเพื่อชำระค่างวดที่ {installment_no}\nยอดชำระ: {amount:,.2f} บาท\nพร้อมเพย์: {PROMPTPAY_ID}"),
-                FlexSendMessage(
-                    alt_text="QR Code ชำระเงิน",
-                    contents={
-                        "type": "bubble",
-                        "body": {
-                            "type": "box",
-                            "layout": "vertical",
-                            "contents": [
-                                {"type": "text", "text": f"QR Code งวดที่ {installment_no}", "weight": "bold", "align": "center"},
-                                {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
-                            ]
+        try:
+            qr_payload = qrcode.generate_payload(promptpay_number, amount)
+            encoded_payload = urllib.parse.quote(qr_payload)
+            qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_payload}"
+
+            line_bot_api.reply_message(
+                reply_token,
+                [
+                    TextSendMessage(text=f"📌 สแกนเพื่อชำระค่างวดที่ {installment_no}\n📦 สินค้า: {contract['product_name']}\n💰 ยอดชำระ: {amount:,.2f} บาท\n📱 PromptPay: {promptpay_number}"),
+                    FlexSendMessage(
+                        alt_text=f"QR Code ชำระเงินงวดที่ {installment_no}",
+                        contents={
+                            "type": "bubble",
+                            "body": {
+                                "type": "box",
+                                "layout": "vertical",
+                                "contents": [
+                                    {"type": "text", "text": f"QR Code ชำระเงินงวดที่ {installment_no}", "weight": "bold", "align": "center", "size": "md", "color": "#1DB446"},
+                                    {"type": "text", "text": f"ยอดชำระ {amount:,.2f} บาท", "align": "center", "size": "sm", "color": "#555555", "margin": "xs"},
+                                    {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
+                                ]
+                            }
                         }
-                    }
-                )
-            ]
-        )
+                    )
+                ]
+            )
+        except Exception as qr_err:
+            print(f"Error generating QR Code: {qr_err}")
+            line_bot_api.reply_message(
+                reply_token,
+                TextSendMessage(text=f"📌 ข้อมูลการชำระค่างวดที่ {installment_no}\n📦 สินค้า: {contract['product_name']}\n💰 ยอดชำระ: {amount:,.2f} บาท\n📱 หมายเลขพร้อมเพย์: {promptpay_number}\n\nกรุณาโอนผ่านหมายเลขพร้อมเพย์ด้านบนและส่งสลิปได้เลยครับ")
+            )
+    except Exception as err:
+        print(f"Error in send_payment_qr: {err}")
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้างรายการชำระเงิน กรุณาลองใหม่อีกครั้งครับ"))
     finally:
         cursor.close()
         conn.close()
@@ -529,7 +547,9 @@ def send_payment_qr(user_id, installment_no, reply_token):
 def send_early_close_qr(user_id, reply_token):
     try:
         conn = get_db()
-    except Exception:
+    except Exception as e:
+        print(f"Database error in send_early_close_qr: {e}")
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
         return
 
     cursor = conn.cursor()
@@ -538,7 +558,7 @@ def send_early_close_qr(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่กำลังผ่อนชำระ"))
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่กำลังผ่อนชำระ กรุณาพิมพ์ เบอร์โทรศัพท์ เพื่อค้นหาสัญญาครับ"))
             return
 
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status = 'paid'", (contract['id'],))
@@ -554,8 +574,9 @@ def send_early_close_qr(user_id, reply_token):
         remaining_balance = float(remaining_count * contract['installment_amount'])
         discount_amount = remaining_balance * 0.15
         final_pay_amount = remaining_balance - discount_amount
+        promptpay_number = PROMPTPAY_ID.strip() if PROMPTPAY_ID else '0800000000'
 
-        qr_payload = qrcode.generate_payload(PROMPTPAY_ID, final_pay_amount)
+        qr_payload = qrcode.generate_payload(promptpay_number, final_pay_amount)
         encoded_payload = urllib.parse.quote(qr_payload)
         qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_payload}"
 
@@ -564,7 +585,8 @@ def send_early_close_qr(user_id, reply_token):
             f"• ยอดคงเหลือคงค้าง ({remaining_count} งวด): {remaining_balance:,.2f} บาท\n"
             f"• ส่วนลดพิเศษ (15%): -{discount_amount:,.2f} บาท\n"
             f"-------------------------------\n"
-            f"💰 ยอดสุทธิที่ต้องชำระปิดบัญชี: {final_pay_amount:,.2f} บาท"
+            f"💰 ยอดสุทธิที่ต้องชำระปิดบัญชี: {final_pay_amount:,.2f} บาท\n"
+            f"📱 หมายเลขพร้อมเพย์: {promptpay_number}"
         )
 
         line_bot_api.reply_message(
@@ -603,6 +625,9 @@ def send_early_close_qr(user_id, reply_token):
                 )
             ]
         )
+    except Exception as err:
+        print(f"Error in send_early_close_qr: {err}")
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้างรายการปิดยอดก่อนกำหนด"))
     finally:
         cursor.close()
         conn.close()
