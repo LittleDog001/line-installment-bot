@@ -6,19 +6,22 @@ from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
 
 admin_bp = Blueprint('admin', __name__)
-DATABASE_URL = os.environ.get('DATABASE_URL')
 TH_TZ = ZoneInfo('Asia/Bangkok')
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise ValueError("DATABASE_URL is not set")
+    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     return conn
 
 @admin_bp.route('/')
 def index():
-    if not DATABASE_URL:
-        return "DATABASE_URL is not set", 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database error: {str(e)}", 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
@@ -28,7 +31,7 @@ def index():
         for c in contracts:
             c_dict = dict(c)
             cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
-            payments = cursor.fetchall()
+            payments = [dict(p) for p in cursor.fetchall()]
             
             c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
             c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
@@ -46,16 +49,19 @@ def index():
             contract_list.append(c_dict)
 
         return render_template('admin.html', contracts=contract_list)
+    except Exception as e:
+        return f"Error loading admin page: {str(e)}", 500
     finally:
         cursor.close()
         conn.close()
 
 @admin_bp.route('/contract/create', methods=['POST'])
 def create_contract():
-    if not DATABASE_URL:
-        return "DATABASE_URL is not set", 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database error: {str(e)}", 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         line_user_id = (request.form.get('line_user_id') or '').strip()
@@ -107,64 +113,12 @@ def create_contract():
         cursor.close()
         conn.close()
 
-@admin_bp.route('/payment/<int:payment_id>/confirm', methods=['POST'])
-def confirm_payment(payment_id):
-    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM payments WHERE id = %s", (payment_id,))
-        payment = cursor.fetchone()
-        
-        if payment:
-            receipt_no = f"REC-{payment['contract_id']}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
-            cursor.execute("""
-                UPDATE payments 
-                SET status = 'paid', paid_at = %s, receipt_no = %s
-                WHERE id = %s
-            """, (now_str, receipt_no, payment_id))
-            conn.commit()
-
-        return redirect(url_for('admin.index'))
-    finally:
-        cursor.close()
-        conn.close()
-
-@admin_bp.route('/contract/<int:contract_id>/close_early', methods=['POST'])
-def close_contract_early(contract_id):
-    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-        contract = cursor.fetchone()
-        
-        if contract:
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s", (contract_id,))
-            payments = cursor.fetchall()
-            unpaid_payments = [p for p in payments if p['status'] != 'paid']
-            
-            for p in unpaid_payments:
-                receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
-                cursor.execute("""
-                    UPDATE payments 
-                    SET status = 'paid', paid_at = %s, receipt_no = %s
-                    WHERE id = %s
-                """, (now_str, receipt_no, p['id']))
-            
-            cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
-            conn.commit()
-
-        return redirect(url_for('admin.index'))
-    finally:
-        cursor.close()
-        conn.close()
-
 def process_contracts_api():
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         if request.method == 'POST':
@@ -246,10 +200,11 @@ def get_contracts_api():
     return process_contracts_api()
 
 def process_contract_detail_api(contract_id):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
@@ -312,10 +267,11 @@ def get_contract_detail_api(contract_id):
     return process_contract_detail_api(contract_id)
 
 def process_payments_by_contract_api(contract_identifier):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE contract_number = %s OR id::text = %s", (contract_identifier, contract_identifier))
@@ -336,11 +292,12 @@ def get_payments_by_contract_api(contract_identifier):
     return process_payments_by_contract_api(contract_identifier)
 
 def pay_contract_installment_api(contract_id):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
     now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    conn = get_db()
     cursor = conn.cursor()
     try:
         data = request.get_json(silent=True) or request.form
@@ -394,10 +351,11 @@ def handle_pay_contract_installment_api(contract_id):
     return pay_contract_installment_api(contract_id)
 
 def unpay_contract_installment_api(contract_id):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         data = request.get_json(silent=True) or request.form
@@ -453,10 +411,11 @@ def handle_unpay_contract_installment_api(contract_id):
 @admin_bp.route('/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
 @admin_bp.route('/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
 def update_contract_status_api(contract_id):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         data = request.get_json(silent=True) or request.form

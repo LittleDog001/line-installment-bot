@@ -24,17 +24,20 @@ TH_TZ = ZoneInfo('Asia/Bangkok')
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
 PROMPTPAY_ID = os.environ.get('PROMPTPAY_ID', '0800000000')
-DATABASE_URL = os.environ.get('DATABASE_URL')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is missing")
+    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     return conn
 
 def init_db():
-    if not DATABASE_URL:
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
         print("DATABASE_URL is not set. Skipping DB initialization.")
         return
     conn = get_db()
@@ -104,10 +107,11 @@ def root_api_unpay(contract_id):
 @app.route('/bill/<int:payment_id>')
 @app.route('/admin/bill/<int:payment_id>')
 def print_bill_main(payment_id):
-    if not DATABASE_URL:
-        return "DATABASE_URL is not set", 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database Connection Error: {str(e)}", 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("""
@@ -116,14 +120,20 @@ def print_bill_main(payment_id):
             JOIN contracts c ON p.contract_id = c.id
             WHERE p.id = %s
         """, (payment_id,))
-        payment = cursor.fetchone()
+        payment_row = cursor.fetchone()
 
-        if not payment:
+        if not payment_row:
             return "ไม่พบข้อมูลบิลนี้", 404
+
+        payment = dict(payment_row)
+        payment['amount'] = float(payment['amount']) if payment['amount'] is not None else 0.0
+        payment['installment_amount'] = float(payment['installment_amount']) if payment['installment_amount'] is not None else 0.0
 
         paid_at = payment['paid_at'] if payment['paid_at'] else datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
         return render_template('bill.html', payment=payment, paid_at=paid_at)
+    except Exception as e:
+        return f"Error loading bill: {str(e)}", 500
     finally:
         cursor.close()
         conn.close()
@@ -131,19 +141,26 @@ def print_bill_main(payment_id):
 @app.route('/contract/doc/<contract_identifier>')
 @app.route('/admin/contract/doc/<contract_identifier>')
 def print_contract_doc(contract_identifier):
-    if not DATABASE_URL:
-        return "DATABASE_URL is not set", 500
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database Connection Error: {str(e)}", 500
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE contract_number = %s OR id::text = %s", (contract_identifier, contract_identifier))
-        contract = cursor.fetchone()
+        contract_row = cursor.fetchone()
 
-        if not contract:
+        if not contract_row:
             return "ไม่พบข้อมูลสัญญา", 404
 
+        contract = dict(contract_row)
+        contract['total_amount'] = float(contract['total_amount']) if contract['total_amount'] is not None else 0.0
+        contract['installment_amount'] = float(contract['installment_amount']) if contract['installment_amount'] is not None else 0.0
+
         return render_template('contract_document.html', contract=contract)
+    except Exception as e:
+        return f"Error loading contract doc: {str(e)}", 500
     finally:
         cursor.close()
         conn.close()
@@ -188,10 +205,11 @@ def handle_message(event):
         )
 
 def send_contract_status(user_id, reply_token):
-    if not DATABASE_URL:
+    try:
+        conn = get_db()
+    except Exception:
         return
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
@@ -273,10 +291,11 @@ def send_contract_status(user_id, reply_token):
         conn.close()
 
 def send_payment_qr(user_id, installment_no, reply_token):
-    if not DATABASE_URL:
+    try:
+        conn = get_db()
+    except Exception:
         return
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
@@ -315,10 +334,11 @@ def send_payment_qr(user_id, installment_no, reply_token):
         conn.close()
 
 def send_early_close_qr(user_id, reply_token):
-    if not DATABASE_URL:
+    try:
+        conn = get_db()
+    except Exception:
         return
 
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
@@ -394,12 +414,12 @@ def send_early_close_qr(user_id, reply_token):
         conn.close()
 
 def process_user_close_early(user_id, reply_token):
-    if not DATABASE_URL:
+    try:
+        conn = get_db()
+    except Exception:
         return
 
     now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    
-    conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))

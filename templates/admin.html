@@ -87,8 +87,8 @@
                     <h5 class="fw-bold text-dark mb-3"><i class="fa-solid fa-plus-circle text-primary me-2"></i>เพิ่มสัญญาผ่อนชำระใหม่</h5>
                     <form id="addContractForm">
                         <div class="mb-2">
-                            <label class="form-label small text-muted">เลขที่สัญญา</label>
-                            <input type="text" id="contract_number" class="form-control" placeholder="เช่น CT001" required>
+                            <label class="form-label small text-muted">LINE User ID</label>
+                            <input type="text" id="line_user_id" class="form-control" placeholder="เช่น U1234567890abcdef..." required>
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">ชื่อ-นามสกุล ลูกค้า</label>
@@ -96,31 +96,27 @@
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
-                            <input type="text" id="id_card" class="form-control" maxlength="13" placeholder="เช่น 1100200300400" required>
+                            <input type="text" id="id_card" class="form-control" maxlength="13" placeholder="เช่น 1100200300400">
                         </div>
                         <div class="mb-2">
-                            <label class="form-label small text-muted">เบอร์โทรศัพท์ (ตรงกับ LINE)</label>
-                            <input type="text" id="phone_number" class="form-control" placeholder="เช่น 0812345678" required>
+                            <label class="form-label small text-muted">เบอร์โทรศัพท์</label>
+                            <input type="text" id="phone" class="form-control" placeholder="เช่น 0812345678" required>
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
-                            <input type="text" id="phone_model" class="form-control" placeholder="เช่น iPhone 15 Pro Max" required>
+                            <input type="text" id="product_name" class="form-control" placeholder="เช่น iPhone 15 Pro Max" required>
                         </div>
                         <div class="row g-2 mb-2">
                             <div class="col-6">
                                 <label class="form-label small text-muted">ยอดผ่อนรวม (บาท)</label>
-                                <input type="number" id="total_amount" class="form-control" placeholder="45000" required>
+                                <input type="number" step="0.01" id="total_amount" class="form-control" placeholder="45000" required>
                             </div>
                             <div class="col-6">
-                                <label class="form-label small text-muted">ค่างวดต่อเดือน</label>
-                                <input type="number" id="monthly_payment" class="form-control" placeholder="3750" required>
+                                <label class="form-label small text-muted">จำนวนงวดทั้งหมด</label>
+                                <input type="number" id="total_installments" class="form-control" placeholder="12" required>
                             </div>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label small text-muted">จำนวนงวดทั้งหมด</label>
-                            <input type="number" id="total_installments" class="form-control" placeholder="12" required>
-                        </div>
-                        <button type="submit" class="btn btn-primary w-100 fw-bold"><i class="fa-solid fa-save me-1"></i> บันทึกสัญญา</button>
+                        <button type="submit" class="btn btn-primary w-100 fw-bold mt-2"><i class="fa-solid fa-save me-1"></i> บันทึกสัญญา</button>
                     </form>
                 </div>
             </div>
@@ -166,8 +162,8 @@
                     <form id="editContractForm">
                         <input type="hidden" id="edit_id">
                         <div class="mb-2">
-                            <label class="form-label small text-muted">เลขที่สัญญา</label>
-                            <input type="text" id="edit_contract_number" class="form-control" required>
+                            <label class="form-label small text-muted">LINE User ID</label>
+                            <input type="text" id="edit_line_user_id" class="form-control" required>
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">ชื่อ-นามสกุล ลูกค้า</label>
@@ -175,29 +171,15 @@
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
-                            <input type="text" id="edit_id_card" class="form-control" maxlength="13" required>
+                            <input type="text" id="edit_id_card" class="form-control" maxlength="13">
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">เบอร์โทรศัพท์</label>
-                            <input type="text" id="edit_phone_number" class="form-control" required>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label small text-muted">รุ่นสินค้า</label>
-                            <input type="text" id="edit_phone_model" class="form-control" required>
-                        </div>
-                        <div class="row g-2 mb-2">
-                            <div class="col-6">
-                                <label class="form-label small text-muted">ยอดผ่อนรวม (บาท)</label>
-                                <input type="number" id="edit_total_amount" class="form-control" required>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small text-muted">ค่างวดต่อเดือน</label>
-                                <input type="number" id="edit_monthly_payment" class="form-control" required>
-                            </div>
+                            <input type="text" id="edit_phone" class="form-control" required>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small text-muted">จำนวนงวดทั้งหมด</label>
-                            <input type="number" id="edit_total_installments" class="form-control" required>
+                            <label class="form-label small text-muted">รุ่นสินค้า</label>
+                            <input type="text" id="edit_product_name" class="form-control" required>
                         </div>
                         <button type="submit" class="btn btn-success w-100 fw-bold"><i class="fa-solid fa-circle-check me-1"></i> บันทึกการแก้ไข</button>
                     </form>
@@ -239,13 +221,12 @@
         document.getElementById('addContractForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const data = {
-                contract_number: document.getElementById('contract_number').value,
+                line_user_id: document.getElementById('line_user_id').value,
                 customer_name: document.getElementById('customer_name').value,
                 id_card: document.getElementById('id_card').value,
-                phone_number: document.getElementById('phone_number').value,
-                phone_model: document.getElementById('phone_model').value,
+                phone: document.getElementById('phone').value,
+                product_name: document.getElementById('product_name').value,
                 total_amount: document.getElementById('total_amount').value,
-                monthly_payment: document.getElementById('monthly_payment').value,
                 total_installments: document.getElementById('total_installments').value
             };
 
@@ -261,7 +242,7 @@
                 loadContracts();
             } else {
                 const err = await res.json();
-                alert('เกิดข้อผิดพลาด: ' + (err.message || 'ไม่สามารถเพิ่มสัญญาได้'));
+                alert('เกิดข้อผิดพลาด: ' + (err.error || err.message || 'ไม่สามารถเพิ่มสัญญาได้'));
             }
         });
 
@@ -277,15 +258,18 @@
                 let totalPaid = 0;
 
                 contracts.forEach(c => {
-                    const isStatusActive = (c.status === 'ACTIVE' || c.status === 'Active');
+                    const statusStr = (c.status || 'active').toLowerCase();
+                    const isStatusActive = (statusStr === 'active');
                     if (isStatusActive) activeContracts++;
                     
-                    const monthly = c.monthly_amount !== undefined ? c.monthly_amount : (c.monthly_payment || 0);
-                    const phone = c.phone || c.phone_number || '';
-                    const productName = c.product_name || c.phone_model || '';
+                    const paidCount = c.paid_count !== undefined ? c.paid_count : (c.paid_installments || 0);
+                    const installmentAmount = Number(c.installment_amount || 0);
+                    const totalAmount = Number(c.total_amount || 0);
+                    const phone = c.phone || '';
+                    const productName = c.product_name || '';
                     const idCard = c.id_card ? ` (ปชช: ${c.id_card})` : '';
 
-                    totalPaid += ((c.paid_installments || 0) * monthly);
+                    totalPaid += (paidCount * installmentAmount);
 
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
@@ -296,10 +280,10 @@
                         </td>
                         <td>
                             <span class="fw-semibold">${productName}</span><br>
-                            <small class="text-muted">฿${Number(monthly).toLocaleString()}/งวด (รวม ฿${Number(c.total_amount).toLocaleString()})</small>
+                            <small class="text-muted">฿${installmentAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})}/งวด (รวม ฿${totalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})})</small>
                         </td>
                         <td>
-                            <span class="badge bg-primary fs-6">${c.paid_installments || 0} / ${c.total_installments}</span>
+                            <span class="badge bg-primary fs-6">${paidCount} / ${c.total_installments}</span>
                         </td>
                         <td>
                             <span class="badge ${isStatusActive ? 'badge-status-active' : 'badge-status-cancelled'}">
@@ -308,15 +292,15 @@
                         </td>
                         <td class="text-center">
                             <div class="btn-group action-btn-group" role="group">
-                                <button class="btn btn-outline-success" onclick="updatePaid(${c.id}, 'add')" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i></button>
-                                <button class="btn btn-outline-warning" onclick="updatePaid(${c.id}, 'subtract')" title="ตัดงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
-                                <button class="btn btn-outline-info" onclick="showHistory('${c.contract_number}')" title="ดูประวัติชำระ"><i class="fa-solid fa-history"></i></button>
+                                <button class="btn btn-outline-success" onclick="payInstallment(${c.id})" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i></button>
+                                <button class="btn btn-outline-warning" onclick="unpayInstallment(${c.id})" title="ยกเลิกงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
+                                <button class="btn btn-outline-info" onclick="showHistory('${c.id}')" title="ดูประวัติชำระ"><i class="fa-solid fa-history"></i></button>
                             </div>
                         </td>
                         <td class="text-center">
                             <div class="btn-group action-btn-group" role="group">
-                                <a href="/contract/doc/${c.contract_number}" target="_blank" class="btn btn-outline-dark" title="เปิดหนังสือสัญญา">
-                                    <i class="fa-solid fa-file-contract"></i> ดูสัญญา
+                                <a href="/contract/doc/${c.id}" target="_blank" class="btn btn-outline-dark" title="เปิดหนังสือสัญญา">
+                                    <i class="fa-solid fa-file-contract"></i> สัญญา
                                 </a>
                                 <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
                                 <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
@@ -329,23 +313,37 @@
 
                 document.getElementById('statTotalContracts').innerText = totalContracts;
                 document.getElementById('statActiveContracts').innerText = activeContracts;
-                document.getElementById('statTotalPaid').innerText = '฿' + totalPaid.toLocaleString();
+                document.getElementById('statTotalPaid').innerText = '฿' + totalPaid.toLocaleString('th-TH', {minimumFractionDigits: 2});
             } catch (err) {
                 console.error("Error loading contracts:", err);
             }
         }
 
-        async function updatePaid(id, action) {
+        // กดปุ่ม + เพื่อบันทึกชำระเงินงวดถัดไป
+        async function payInstallment(id) {
             const res = await fetch(`/api/contracts/${id}/pay`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action })
+                headers: { 'Content-Type': 'application/json' }
             });
             if (res.ok) {
                 loadContracts();
             } else {
                 const err = await res.json();
-                alert(err.message || 'เกิดข้อผิดพลาดในการอัปเดตงวด');
+                alert(err.error || err.message || 'เกิดข้อผิดพลาดในการบันทึกการชำระ');
+            }
+        }
+
+        // กดปุ่ม - เพื่อยกเลิกงวดชำระล่าสุด
+        async function unpayInstallment(id) {
+            const res = await fetch(`/api/contracts/${id}/unpay`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (res.ok) {
+                loadContracts();
+            } else {
+                const err = await res.json();
+                alert(err.error || err.message || 'เกิดข้อผิดพลาดในการยกเลิกงวด');
             }
         }
 
@@ -356,14 +354,11 @@
                 const c = await res.json();
                 
                 document.getElementById('edit_id').value = c.id;
-                document.getElementById('edit_contract_number').value = c.contract_number || '';
+                document.getElementById('edit_line_user_id').value = c.line_user_id || '';
                 document.getElementById('edit_customer_name').value = c.customer_name || '';
                 document.getElementById('edit_id_card').value = c.id_card || '';
-                document.getElementById('edit_phone_number').value = c.phone || c.phone_number || '';
-                document.getElementById('edit_phone_model').value = c.product_name || c.phone_model || '';
-                document.getElementById('edit_total_amount').value = c.total_amount || 0;
-                document.getElementById('edit_monthly_payment').value = c.monthly_amount !== undefined ? c.monthly_amount : (c.monthly_payment || 0);
-                document.getElementById('edit_total_installments').value = c.total_installments || 0;
+                document.getElementById('edit_phone').value = c.phone || '';
+                document.getElementById('edit_product_name').value = c.product_name || '';
 
                 if (editModalObj) editModalObj.show();
             } catch (err) {
@@ -375,14 +370,11 @@
             e.preventDefault();
             const id = document.getElementById('edit_id').value;
             const data = {
-                contract_number: document.getElementById('edit_contract_number').value,
+                line_user_id: document.getElementById('edit_line_user_id').value,
                 customer_name: document.getElementById('edit_customer_name').value,
                 id_card: document.getElementById('edit_id_card').value,
-                phone_number: document.getElementById('edit_phone_number').value,
-                phone_model: document.getElementById('edit_phone_model').value,
-                total_amount: document.getElementById('edit_total_amount').value,
-                monthly_payment: document.getElementById('edit_monthly_payment').value,
-                total_installments: document.getElementById('edit_total_installments').value
+                phone: document.getElementById('edit_phone').value,
+                product_name: document.getElementById('edit_product_name').value
             };
 
             const res = await fetch(`/api/contracts/${id}`, {
@@ -397,13 +389,13 @@
                 loadContracts();
             } else {
                 const err = await res.json();
-                alert('เกิดข้อผิดพลาด: ' + (err.message || 'ไม่สามารถบันทึกการแก้ไขได้'));
+                alert('เกิดข้อผิดพลาด: ' + (err.error || err.message || 'ไม่สามารถบันทึกการแก้ไขได้'));
             }
         });
 
         async function toggleStatus(id, currentStatus) {
-            const isCurrentlyActive = (currentStatus === 'ACTIVE' || currentStatus === 'Active');
-            const newStatus = isCurrentlyActive ? 'CANCELLED' : 'ACTIVE';
+            const isCurrentlyActive = (currentStatus.toLowerCase() === 'active');
+            const newStatus = isCurrentlyActive ? 'closed' : 'active';
             if (confirm(`คุณต้องการเปลี่ยนสถานะเป็น ${newStatus} ใช่หรือไม่?`)) {
                 await fetch(`/api/contracts/${id}/status`, {
                     method: 'POST',
@@ -421,19 +413,21 @@
             }
         }
 
-        async function showHistory(contractNum) {
+        async function showHistory(contractId) {
             try {
-                document.getElementById('modalContractNum').innerText = contractNum;
-                const res = await fetch(`/api/payments/${contractNum}`);
+                const res = await fetch(`/api/payments/${contractId}`);
                 const payments = await res.json();
                 const list = document.getElementById('historyList');
                 list.innerHTML = '';
+                document.getElementById('modalContractNum').innerText = contractId;
 
-                if (!payments || payments.length === 0) {
+                const paidPayments = (payments || []).filter(p => p.status === 'paid');
+
+                if (!paidPayments || paidPayments.length === 0) {
                     list.innerHTML = `<li class="list-group-item text-center text-muted p-3">ยังไม่มีประวัติการชำระเงิน</li>`;
                 } else {
-                    payments.forEach(p => {
-                        const amt = p.amount ? Number(p.amount).toLocaleString() : '0';
+                    paidPayments.forEach(p => {
+                        const amt = p.amount ? Number(p.amount).toLocaleString('th-TH', {minimumFractionDigits: 2}) : '0.00';
                         list.innerHTML += `
                             <li class="list-group-item d-flex justify-content-between align-items-center py-3">
                                 <div>
