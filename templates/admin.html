@@ -87,20 +87,16 @@
                     <h5 class="fw-bold text-dark mb-3"><i class="fa-solid fa-plus-circle text-primary me-2"></i>เพิ่มสัญญาผ่อนชำระใหม่</h5>
                     <form id="addContractForm">
                         <div class="mb-2">
-                            <label class="form-label small text-muted">LINE User ID</label>
-                            <input type="text" id="line_user_id" class="form-control" placeholder="เช่น U1234567890abcdef..." required>
-                        </div>
-                        <div class="mb-2">
                             <label class="form-label small text-muted">ชื่อ-นามสกุล ลูกค้า</label>
                             <input type="text" id="customer_name" class="form-control" placeholder="เช่น สมชาย ใจดี" required>
                         </div>
                         <div class="mb-2">
-                            <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
-                            <input type="text" id="id_card" class="form-control" maxlength="13" placeholder="เช่น 1100200300400">
-                        </div>
-                        <div class="mb-2">
                             <label class="form-label small text-muted">เบอร์โทรศัพท์</label>
                             <input type="text" id="phone" class="form-control" placeholder="เช่น 0812345678" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
+                            <input type="text" id="id_card" class="form-control" maxlength="13" placeholder="เช่น 1100200300400">
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
@@ -167,20 +163,16 @@
                     <form id="editContractForm">
                         <input type="hidden" id="edit_id">
                         <div class="mb-2">
-                            <label class="form-label small text-muted">LINE User ID</label>
-                            <input type="text" id="edit_line_user_id" class="form-control" required>
-                        </div>
-                        <div class="mb-2">
                             <label class="form-label small text-muted">ชื่อ-นามสกุล ลูกค้า</label>
                             <input type="text" id="edit_customer_name" class="form-control" required>
                         </div>
                         <div class="mb-2">
-                            <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
-                            <input type="text" id="edit_id_card" class="form-control" maxlength="13">
-                        </div>
-                        <div class="mb-2">
                             <label class="form-label small text-muted">เบอร์โทรศัพท์</label>
                             <input type="text" id="edit_phone" class="form-control" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
+                            <input type="text" id="edit_id_card" class="form-control" maxlength="13">
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
@@ -230,10 +222,9 @@
         document.getElementById('addContractForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const data = {
-                line_user_id: document.getElementById('line_user_id').value,
                 customer_name: document.getElementById('customer_name').value,
-                id_card: document.getElementById('id_card').value,
                 phone: document.getElementById('phone').value,
+                id_card: document.getElementById('id_card').value,
                 product_name: document.getElementById('product_name').value,
                 total_amount: document.getElementById('total_amount').value,
                 total_installments: document.getElementById('total_installments').value,
@@ -336,7 +327,6 @@
             }
         }
 
-        // กดปุ่ม + เพื่อบันทึกชำระเงินงวดถัดไป
         async function payInstallment(id) {
             const res = await fetch(`/api/contracts/${id}/pay`, {
                 method: 'POST',
@@ -350,7 +340,6 @@
             }
         }
 
-        // กดปุ่ม - เพื่อยกเลิกงวดชำระล่าสุด
         async function unpayInstallment(id) {
             const res = await fetch(`/api/contracts/${id}/unpay`, {
                 method: 'POST',
@@ -371,10 +360,9 @@
                 const c = await res.json();
                 
                 document.getElementById('edit_id').value = c.id;
-                document.getElementById('edit_line_user_id').value = c.line_user_id || '';
                 document.getElementById('edit_customer_name').value = c.customer_name || '';
-                document.getElementById('edit_id_card').value = c.id_card || '';
                 document.getElementById('edit_phone').value = c.phone || '';
+                document.getElementById('edit_id_card').value = c.id_card || '';
                 document.getElementById('edit_product_name').value = c.product_name || '';
                 document.getElementById('edit_due_day').value = c.due_day || 5;
 
@@ -388,10 +376,9 @@
             e.preventDefault();
             const id = document.getElementById('edit_id').value;
             const data = {
-                line_user_id: document.getElementById('edit_line_user_id').value,
                 customer_name: document.getElementById('edit_customer_name').value,
-                id_card: document.getElementById('edit_id_card').value,
                 phone: document.getElementById('edit_phone').value,
+                id_card: document.getElementById('edit_id_card').value,
                 product_name: document.getElementById('edit_product_name').value,
                 due_day: document.getElementById('edit_due_day').value
             };
