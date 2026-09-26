@@ -554,21 +554,98 @@ def render_flex_contract(contract, reply_token):
 
 def send_payment_qr(user_id, installment_no, reply_token):
     try:
+        conn = get_db()
+    except Exception as err:
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
+        return
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่"))
+            return
+
+        amount = float(contract['installment_amount'])
+        qr_url = f"{request.host_url.rstrip('/')}/qr-code/{PROMPTPAY_ID}/{amount:.2f}"
+
+        msg_text = (
+            f"📱 QR Code สำหรับชำระเงินค่างวด\n"
+            f"-------------------------------\n"
+            f"📦 สินค้า: {contract['product_name']}\n"
+            f"🔢 งวดที่: {installment_no}\n"
+            f"💰 ยอดชำระ: {amount:,.2f} บาท\n\n"
+            f"สแกน QR Code ด้านล่างเพื่อชำระเงินได้ทันทีครับ"
+        )
+
         line_bot_api.reply_message(
             reply_token,
-            TextSendMessage(text="บันทึกการชำระเงินเรียบร้อยแล้ว ขอบคุณที่ใช้บริการครับ")
+            [
+                TextSendMessage(text=msg_text),
+                ImageSendMessage(original_content_url=qr_url, preview_image_url=qr_url)
+            ]
         )
     except Exception as err:
         print(f"Error in send_payment_qr: {err}")
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้าง QR Code ชำระเงิน"))
+    finally:
+        cursor.close()
+        conn.close()
 
 def send_early_close_qr(user_id, reply_token):
     try:
+        conn = get_db()
+    except Exception as err:
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
+        return
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่"))
+            return
+
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
+        payments = cursor.fetchall()
+
+        paid_count = sum(1 for p in payments if p['status'] == 'paid')
+        remaining_count = contract['total_installments'] - paid_count
+
+        if remaining_count <= 0:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="สัญญาของคุณปิดยอดชำระเรียบร้อยแล้วครับ"))
+            return
+
+        remaining_balance = float(remaining_count * contract['installment_amount'])
+        discounted_close_amount = remaining_balance * 0.85
+        qr_url = f"{request.host_url.rstrip('/')}/qr-code/{PROMPTPAY_ID}/{discounted_close_amount:.2f}"
+
+        msg_text = (
+            f"🔥 QR Code ปิดยอดสัญญาผ่อนชำระก่อนกำหนด (รับส่วนลด 15%)\n"
+            f"-------------------------------\n"
+            f"📦 สินค้า: {contract['product_name']}\n"
+            f"🔢 ยอดคงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)\n"
+            f"💰 ยอดสุทธิหลังหักส่วนลด: {discounted_close_amount:,.2f} บาท\n\n"
+            f"สแกน QR Code ด้านล่างเพื่อชำระปิดยอดได้ทันทีครับ"
+        )
+
         line_bot_api.reply_message(
             reply_token,
-            TextSendMessage(text="บันทึกการปิดยอดเรียบร้อยแล้ว ขอบคุณที่ใช้บริการครับ")
+            [
+                TextSendMessage(text=msg_text),
+                ImageSendMessage(original_content_url=qr_url, preview_image_url=qr_url)
+            ]
         )
     except Exception as err:
         print(f"Error in send_early_close_qr: {err}")
+        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้าง QR Code ปิดยอด"))
+    finally:
+        cursor.close()
+        conn.close()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
