@@ -20,132 +20,147 @@ def index():
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
-    contracts = cursor.fetchall()
-    
-    contract_list = []
-    for c in contracts:
-        c_dict = dict(c)
-        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
-        payments = cursor.fetchall()
+    try:
+        cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
+        contracts = cursor.fetchall()
         
-        # แปลง Decimal เป็น float ป้องกัน Type Error
-        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] else 0.0
-        c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] else 0.0
+        contract_list = []
+        for c in contracts:
+            c_dict = dict(c)
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
+            payments = cursor.fetchall()
+            
+            c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
+            c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
 
-        paid_count = sum(1 for p in payments if p['status'] == 'paid')
-        remaining_count = c_dict['total_installments'] - paid_count
-        remaining_amount = float(remaining_count * c_dict['installment_amount'])
-        close_with_discount = remaining_amount * 0.85
-        
-        c_dict['payments'] = payments
-        c_dict['paid_count'] = paid_count
-        c_dict['remaining_count'] = remaining_count
-        c_dict['remaining_amount'] = remaining_amount
-        c_dict['close_with_discount'] = close_with_discount
-        contract_list.append(c_dict)
+            paid_count = sum(1 for p in payments if p['status'] == 'paid')
+            remaining_count = c_dict['total_installments'] - paid_count
+            remaining_amount = float(remaining_count * c_dict['installment_amount'])
+            close_with_discount = remaining_amount * 0.85
+            
+            c_dict['payments'] = payments
+            c_dict['paid_count'] = paid_count
+            c_dict['remaining_count'] = remaining_count
+            c_dict['remaining_amount'] = remaining_amount
+            c_dict['close_with_discount'] = close_with_discount
+            contract_list.append(c_dict)
 
-    cursor.close()
-    conn.close()
-    return render_template('admin.html', contracts=contract_list)
+        return render_template('admin.html', contracts=contract_list)
+    finally:
+        cursor.close()
+        conn.close()
 
 @admin_bp.route('/contract/create', methods=['POST'])
 def create_contract():
-    conn = None
+    if not DATABASE_URL:
+        return "DATABASE_URL is not set", 500
+
+    conn = get_db()
+    cursor = conn.cursor()
     try:
-        line_user_id = request.form.get('line_user_id', '').strip()
-        customer_name = request.form.get('customer_name', '').strip()
-        id_card = request.form.get('id_card', '').strip()
-        phone = request.form.get('phone', '').strip()
-        product_name = request.form.get('product_name', '').strip()
+        # ดึงข้อมูลพร้อมป้องกันค่า None
+        line_user_id = (request.form.get('line_user_id') or '').strip()
+        customer_name = (request.form.get('customer_name') or '').strip()
+        id_card = (request.form.get('id_card') or '').strip()
+        phone = (request.form.get('phone') or '').strip()
+        product_name = (request.form.get('product_name') or '').strip()
         
-        total_amount_val = request.form.get('total_amount', 0)
-        total_installments_val = request.form.get('total_installments', 0)
+        raw_total = request.form.get('total_amount', 0)
+        raw_installments = request.form.get('total_installments', 0)
 
-        total_amount = float(total_amount_val) if total_amount_val else 0.0
-        total_installments = int(total_installments_val) if total_installments_val else 0
+        total_amount = float(raw_total) if raw_total else 0.0
+        total_installments = int(raw_installments) if raw_installments else 0
 
+        # ตรวจสอบความถูกต้องของค่างวด
         if total_installments <= 0 or total_amount <= 0:
             return "กรุณากรอกยอดเงินรวมและจำนวนงวดให้ถูกต้อง (ต้องมากกว่า 0)", 400
 
         installment_amount = total_amount / total_installments
         contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
 
-        conn = get_db()
-        cursor = conn.cursor()
+        # 1. บันทึกข้อมูลลงตาราง contracts
         cursor.execute("""
-            INSERT INTO contracts (contract_number, line_user_id, customer_name, id_card, phone, product_name, total_amount, total_installments, installment_amount)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO contracts (
+                contract_number, line_user_id, customer_name, id_card, phone, 
+                product_name, total_amount, total_installments, installment_amount, status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
             RETURNING id
-        """, (contract_number, line_user_id, customer_name, id_card, phone, product_name, total_amount, total_installments, installment_amount))
+        """, (
+            contract_number, line_user_id, customer_name, id_card, phone, 
+            product_name, total_amount, total_installments, installment_amount
+        ))
         
-        contract_id = cursor.fetchone()['id']
+        contract_row = cursor.fetchone()
+        contract_id = contract_row['id']
 
+        # 2. บันทึกรายการงวดผ่อนลงตาราง payments
         for i in range(1, total_installments + 1):
             cursor.execute("""
                 INSERT INTO payments (contract_id, installment_no, amount, status)
                 VALUES (%s, %s, %s, 'pending')
             """, (contract_id, i, installment_amount))
 
+        # Commit บันทึกข้อมูลจริงลง PostgreSQL
         conn.commit()
-        cursor.close()
-        conn.close()
-
         return redirect(url_for('admin.index'))
 
     except Exception as e:
-        if conn:
-            conn.rollback()
-            conn.close()
+        conn.rollback() # ย้อนกลับ Transaction ป้องกันฐานข้อมูลค้าง
         return f"เกิดข้อผิดพลาดในการบันทึกสัญญา: {str(e)}", 500
+    finally:
+        cursor.close()
+        conn.close()
 
 @admin_bp.route('/payment/<int:payment_id>/confirm', methods=['POST'])
 def confirm_payment(payment_id):
     now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM payments WHERE id = %s", (payment_id,))
-    payment = cursor.fetchone()
-    
-    if payment:
-        receipt_no = f"REC-{payment['contract_id']}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
-        cursor.execute("""
-            UPDATE payments 
-            SET status = 'paid', paid_at = %s, receipt_no = %s
-            WHERE id = %s
-        """, (now_str, receipt_no, payment_id))
-        conn.commit()
-
-    cursor.close()
-    conn.close()
-    return redirect(url_for('admin.index'))
-
-@admin_bp.route('/contract/<int:contract_id>/close_early', methods=['POST'])
-def close_contract_early(contract_id):
-    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-    contract = cursor.fetchone()
-    
-    if contract:
-        cursor.execute("SELECT * FROM payments WHERE contract_id = %s", (contract_id,))
-        payments = cursor.fetchall()
-        unpaid_payments = [p for p in payments if p['status'] != 'paid']
+    try:
+        cursor.execute("SELECT * FROM payments WHERE id = %s", (payment_id,))
+        payment = cursor.fetchone()
         
-        for p in unpaid_payments:
-            receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+        if payment:
+            receipt_no = f"REC-{payment['contract_id']}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
             cursor.execute("""
                 UPDATE payments 
                 SET status = 'paid', paid_at = %s, receipt_no = %s
                 WHERE id = %s
-            """, (now_str, receipt_no, p['id']))
-        
-        cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
-        conn.commit()
+            """, (now_str, receipt_no, payment_id))
+            conn.commit()
 
-    cursor.close()
-    conn.close()
-    return redirect(url_for('admin.index'))
+        return redirect(url_for('admin.index'))
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/contract/<int:contract_id>/close_early', methods=['POST'])
+def close_contract_early(contract_id):
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+        
+        if contract:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s", (contract_id,))
+            payments = cursor.fetchall()
+            unpaid_payments = [p for p in payments if p['status'] != 'paid']
+            
+            for p in unpaid_payments:
+                receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+                cursor.execute("""
+                    UPDATE payments 
+                    SET status = 'paid', paid_at = %s, receipt_no = %s
+                    WHERE id = %s
+                """, (now_str, receipt_no, p['id']))
+            
+            cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
+            conn.commit()
+
+        return redirect(url_for('admin.index'))
+    finally:
+        cursor.close()
+        conn.close()
