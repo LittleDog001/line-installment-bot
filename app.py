@@ -500,7 +500,7 @@ def send_payment_qr(user_id, installment_no, reply_token):
         qr_payload = qrcode.generate_payload(PROMPTPAY_ID, amount)
         
         encoded_payload = urllib.parse.quote(qr_payload)
-        qr_image_url = f"https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl={encoded_payload}"
+        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_payload}"
 
         line_bot_api.reply_message(
             reply_token,
@@ -557,7 +557,7 @@ def send_early_close_qr(user_id, reply_token):
 
         qr_payload = qrcode.generate_payload(PROMPTPAY_ID, final_pay_amount)
         encoded_payload = urllib.parse.quote(qr_payload)
-        qr_image_url = f"https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl={encoded_payload}"
+        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_payload}"
 
         msg = (
             f"🎉 ข้อเสนอพิเศษปิดยอดก่อนกำหนด\n"
