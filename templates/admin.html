@@ -19,6 +19,7 @@
         .card-stat:hover { transform: translateY(-3px); }
         .table-hover tbody tr:hover { background-color: rgba(13, 110, 253, 0.03); }
         .badge-status-active { background-color: #d1e7dd; color: #0f5132; }
+        .badge-status-closed { background-color: #cfe2ff; color: #084298; }
         .badge-status-cancelled { background-color: #f8d7da; color: #842029; }
         .action-btn-group .btn { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
     </style>
@@ -39,7 +40,7 @@
 
         <!-- Stat Cards Summary -->
         <div class="row g-3 mb-4">
-            <div class="col-md-4">
+            <div class="col-md-2-4 col-sm-6 col-12">
                 <div class="card card-custom card-stat p-3 bg-white">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
@@ -52,7 +53,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-2-4 col-sm-6 col-12">
                 <div class="card card-custom card-stat p-3 bg-white">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
@@ -65,7 +66,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-2-4 col-sm-6 col-12">
                 <div class="card card-custom card-stat p-3 bg-white">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
@@ -75,6 +76,63 @@
                         <div class="bg-warning-subtle text-warning p-3 rounded-circle">
                             <i class="fa-solid fa-wallet fa-xl"></i>
                         </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2-4 col-sm-6 col-12">
+                <div class="card card-custom card-stat p-3 bg-white">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-muted small">บิลต้องชำระเดือนนี้</span>
+                            <h3 class="fw-bold mb-0 text-info" id="statDueThisMonth">0</h3>
+                        </div>
+                        <div class="bg-info-subtle text-info p-3 rounded-circle">
+                            <i class="fa-solid fa-calendar-day fa-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2-4 col-sm-6 col-12">
+                <div class="card card-custom card-stat p-3 bg-white">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-muted small">บิลชำระแล้วเดือนนี้</span>
+                            <h3 class="fw-bold mb-0 text-success" id="statPaidThisMonth">0</h3>
+                        </div>
+                        <div class="bg-success-subtle text-success p-3 rounded-circle">
+                            <i class="fa-solid fa-check-double fa-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section: Unpaid Monthly Bills -->
+        <div class="row g-4 mb-4">
+            <div class="col-12">
+                <div class="card card-custom p-4 bg-white border-start border-danger border-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-danger mb-0">
+                            <i class="fa-solid fa-triangle-exclamation me-2"></i>รายการบิลที่ยังไม่ได้ชำระประจำเดือนนี้
+                        </h5>
+                        <span class="badge bg-danger rounded-pill" id="unpaidBillsBadge">0 รายการ</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr class="small text-muted">
+                                    <th>สัญญา/ลูกค้า</th>
+                                    <th>สินค้า</th>
+                                    <th>งวดที่ค้าง</th>
+                                    <th>ยอดที่ต้องชำระ</th>
+                                    <th>กำหนดชำระ</th>
+                                    <th class="text-center">ดำเนินการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="unpaidBillsTableBody">
+                                <!-- Data rendered via JS -->
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -222,6 +280,16 @@
         </div>
     </div>
 
+    <!-- CSS Grid Hack for 5 Stat Cards -->
+    <style>
+        @media (min-width: 768px) {
+            .col-md-2-4 {
+                flex: 0 0 auto;
+                width: 20%;
+            }
+        }
+    </style>
+
     <!-- Bootstrap 5 JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
@@ -310,18 +378,31 @@
                 const res = await fetch('/api/contracts');
                 const contracts = await res.json();
                 const tbody = document.getElementById('contractsTableBody');
+                const unpaidTbody = document.getElementById('unpaidBillsTableBody');
+                
                 tbody.innerHTML = '';
+                unpaidTbody.innerHTML = '';
 
                 let totalContracts = contracts.length;
                 let activeContracts = 0;
                 let totalPaid = 0;
+                let dueThisMonthCount = 0;
+                let paidThisMonthCount = 0;
+                let unpaidBillsList = [];
+
+                const now = new Date();
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
 
                 contracts.forEach(c => {
                     const statusStr = (c.status || 'active').toLowerCase();
                     const isStatusActive = (statusStr === 'active');
+                    const isClosed = (statusStr === 'closed' || statusStr === 'closed_early');
+                    
                     if (isStatusActive) activeContracts++;
                     
                     const paidCount = c.paid_count !== undefined ? c.paid_count : (c.paid_installments || 0);
+                    const totalInstallments = Number(c.total_installments || 0);
                     const installmentAmount = Number(c.installment_amount || 0);
                     const totalAmount = Number(c.total_amount || 0);
                     const phone = c.phone || '';
@@ -332,7 +413,90 @@
 
                     totalPaid += (paidCount * installmentAmount);
 
+                    // คำนวณสถานะบิลประจำเดือนนี้
+                    if (isStatusActive) {
+                        dueThisMonthCount++;
+                        
+                        let hasPaidThisMonth = false;
+                        if (c.payments && Array.isArray(c.payments)) {
+                            hasPaidThisMonth = c.payments.some(p => {
+                                if (p.status === 'paid' && p.paid_at) {
+                                    const pDate = new Date(p.paid_at);
+                                    return pDate.getMonth() === currentMonth && pDate.getFullYear() === currentYear;
+                                }
+                                return false;
+                            });
+                        }
+
+                        if (hasPaidThisMonth) {
+                            paidThisMonthCount++;
+                        } else {
+                            unpaidBillsList.push({
+                                contract_id: c.id,
+                                contract_number: c.contract_number,
+                                customer_name: c.customer_name,
+                                phone: phone,
+                                product_name: productName,
+                                next_installment: paidCount + 1,
+                                total_installments: totalInstallments,
+                                installment_amount: installmentAmount,
+                                due_day: dueDay
+                            });
+                        }
+                    }
+
+                    let statusBadgeClass = 'badge-status-cancelled';
+                    let statusLabel = c.status;
+                    if (isStatusActive) {
+                        statusBadgeClass = 'badge-status-active';
+                        statusLabel = 'active';
+                    } else if (isClosed) {
+                        statusBadgeClass = 'badge-status-closed';
+                        statusLabel = (statusStr === 'closed_early') ? 'ปิดยอดแล้ว (ส่วนลด)' : 'ปิดยอดแล้ว';
+                    }
+
                     const tr = document.createElement('tr');
+                    
+                    let actionButtons = '';
+                    if (!isClosed) {
+                        actionButtons = `
+                            <div class="btn-group action-btn-group mb-1" role="group">
+                                <button class="btn btn-outline-success" onclick="payInstallment(${c.id})" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i> งวด</button>
+                                <button class="btn btn-outline-warning" onclick="unpayInstallment(${c.id})" title="ยกเลิกงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
+                            </div><br>
+                            <button class="btn btn-sm btn-success w-100 fw-bold" onclick="closeContractEarly(${c.id})" title="ยืนยันปิดยอดทั้งหมด">
+                                <i class="fa-solid fa-check-double me-1"></i> ยืนยันปิดยอด
+                            </button>
+                        `;
+                    } else {
+                        actionButtons = `
+                            <span class="badge bg-secondary"><i class="fa-solid fa-lock me-1"></i>ปิดยอดเรียบร้อย</span>
+                        `;
+                    }
+
+                    let toolButtons = '';
+                    if (!isClosed) {
+                        toolButtons = `
+                            <div class="btn-group action-btn-group" role="group">
+                                <a href="/contract/doc/${c.id}" target="_blank" class="btn btn-outline-dark" title="เปิดหนังสือสัญญา">
+                                    <i class="fa-solid fa-file-contract"></i>
+                                </a>
+                                <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
+                                <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
+                                <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                        `;
+                    } else {
+                        toolButtons = `
+                            <div class="btn-group action-btn-group" role="group">
+                                <a href="/contract/doc/${c.id}" target="_blank" class="btn btn-outline-dark" title="เปิดหนังสือสัญญา">
+                                    <i class="fa-solid fa-file-contract"></i>
+                                </a>
+                                <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                        `;
+                    }
+
                     tr.innerHTML = `
                         <td>
                             <strong class="text-primary">${c.contract_number}</strong><br>
@@ -344,43 +508,84 @@
                             <small class="text-muted">฿${installmentAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})}/งวด (รวม ฿${totalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})})</small>
                         </td>
                         <td>
-                            <span class="badge bg-primary fs-6 mb-1">${paidCount} / ${c.total_installments}</span><br>
+                            <span class="badge bg-primary fs-6 mb-1">${paidCount} / ${totalInstallments}</span><br>
                             <small class="text-muted"><i class="fa-regular fa-calendar-check text-success me-1"></i>ทุกวันที่ ${dueDay}</small>
                         </td>
                         <td>
                             <small class="text-muted"><i class="fa-regular fa-clock me-1"></i>${createdAtFormatted}</small>
                         </td>
                         <td>
-                            <span class="badge ${isStatusActive ? 'badge-status-active' : 'badge-status-cancelled'}">
-                                ${c.status}
+                            <span class="badge ${statusBadgeClass}">
+                                ${statusLabel}
                             </span>
                         </td>
                         <td class="text-center">
-                            <div class="btn-group action-btn-group" role="group">
-                                <button class="btn btn-outline-success" onclick="payInstallment(${c.id})" title="เพิ่มงวดชำระ (+1)"><i class="fa-solid fa-plus"></i></button>
-                                <button class="btn btn-outline-warning" onclick="unpayInstallment(${c.id})" title="ยกเลิกงวดชำระ (-1)"><i class="fa-solid fa-minus"></i></button>
-                                <button class="btn btn-outline-info" onclick="showHistory('${c.id}')" title="ดูประวัติชำระ"><i class="fa-solid fa-history"></i></button>
-                            </div>
+                            ${actionButtons}
+                            <button class="btn btn-sm btn-link text-decoration-none mt-1" onclick="showHistory('${c.id}')"><i class="fa-solid fa-history me-1"></i>ประวัติ</button>
                         </td>
                         <td class="text-center">
-                            <div class="btn-group action-btn-group" role="group">
-                                <a href="/contract/doc/${c.id}" target="_blank" class="btn btn-outline-dark" title="เปิดหนังสือสัญญา">
-                                    <i class="fa-solid fa-file-contract"></i> สัญญา
-                                </a>
-                                <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
-                                <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
-                                <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
-                            </div>
+                            ${toolButtons}
                         </td>
                     `;
                     tbody.appendChild(tr);
                 });
 
+                // แสดงผลรายการบิลที่ยังไม่ชำระในหน้าหลังบ้าน
+                if (unpaidBillsList.length === 0) {
+                    unpaidTbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" class="text-center text-success py-3 fw-bold">
+                                <i class="fa-solid fa-circle-check me-1"></i> ไม่มีรายการบิลค้างชำระในเดือนนี้
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    unpaidBillsList.forEach(b => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>
+                                <strong class="text-primary">${b.contract_number}</strong><br>
+                                <span class="fw-bold">${b.customer_name}</span>
+                            </td>
+                            <td>${b.product_name}</td>
+                            <td><span class="badge bg-warning text-dark">งวดที่ ${b.next_installment} / ${b.total_installments}</span></td>
+                            <td class="fw-bold text-danger">฿${b.installment_amount.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+                            <td><i class="fa-regular fa-calendar me-1"></i>วันที่ ${b.due_day} ของเดือน</td>
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-success" onclick="payInstallment(${b.contract_id})">
+                                    <i class="fa-solid fa-check me-1"></i> บันทึกชำระเงิน
+                                </button>
+                            </td>
+                        `;
+                        unpaidTbody.appendChild(tr);
+                    });
+                }
+
                 document.getElementById('statTotalContracts').innerText = totalContracts;
                 document.getElementById('statActiveContracts').innerText = activeContracts;
                 document.getElementById('statTotalPaid').innerText = '฿' + totalPaid.toLocaleString('th-TH', {minimumFractionDigits: 2});
+                document.getElementById('statDueThisMonth').innerText = dueThisMonthCount;
+                document.getElementById('statPaidThisMonth').innerText = paidThisMonthCount;
+                document.getElementById('unpaidBillsBadge').innerText = `${unpaidBillsList.length} รายการ`;
+
             } catch (err) {
                 console.error("Error loading contracts:", err);
+            }
+        }
+
+        async function closeContractEarly(id) {
+            if (confirm('ยืนยันที่จะปิดยอดสัญญานี้? ระบบจะบันทึกสถานะปิดยอดแล้ว และไม่สามารถแก้ไขสัญญาได้ยกเว้นลบออก')) {
+                const res = await fetch(`/api/contracts/${id}/close_early`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (res.ok) {
+                    alert('ปิดยอดสัญญาเรียบร้อยแล้ว');
+                    loadContracts();
+                } else {
+                    const err = await res.json();
+                    alert(err.error || err.message || 'เกิดข้อผิดพลาดในการปิดยอด');
+                }
             }
         }
 

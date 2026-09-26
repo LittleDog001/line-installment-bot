@@ -372,6 +372,10 @@ def pay_contract_installment_api(contract_id):
         remaining_count = contract['total_installments'] - paid_count
         remaining_amount = float(remaining_count * contract['installment_amount'])
 
+        if remaining_count == 0:
+            cursor.execute("UPDATE contracts SET status = 'closed' WHERE id = %s", (contract_id,))
+            conn.commit()
+
         return jsonify({
             'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว',
             'payment_id': payment['id'],
@@ -418,7 +422,7 @@ def unpay_contract_installment_api(contract_id):
             WHERE id = %s
         """, (payment['id'],))
 
-        cursor.execute("UPDATE contracts SET status = 'active' WHERE id = %s AND status = 'closed_early'", (contract_id,))
+        cursor.execute("UPDATE contracts SET status = 'active' WHERE id = %s AND status IN ('closed_early', 'closed')", (contract_id,))
 
         conn.commit()
 
@@ -444,11 +448,6 @@ def unpay_contract_installment_api(contract_id):
         cursor.close()
         conn.close()
 
-@admin_bp.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
-@admin_bp.route('/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
-def handle_unpay_contract_installment_api(contract_id):
-    return unpay_contract_installment_api(contract_id)
-
 @admin_bp.route('/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
 @admin_bp.route('/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
 def update_contract_status_api(contract_id):
@@ -466,6 +465,45 @@ def update_contract_status_api(contract_id):
         conn.commit()
 
         return jsonify({'message': 'อัปเดตสถานะสัญญาเรียบร้อยแล้ว', 'status': status})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/close_early', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/close_early', methods=['POST', 'PUT'])
+def close_contract_early_api(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid'", (contract_id,))
+        unpaid_payments = cursor.fetchall()
+
+        for p in unpaid_payments:
+            receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+            cursor.execute("""
+                UPDATE payments 
+                SET status = 'paid', paid_at = %s, receipt_no = %s
+                WHERE id = %s
+            """, (now_str, receipt_no, p['id']))
+
+        cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
+        conn.commit()
+
+        return jsonify({'message': 'บันทึกการปิดยอดสัญญาสำเร็จ'})
     except Exception as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 500

@@ -339,8 +339,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="รูปแบบคำสั่งไม่ถูกต้อง"))
     elif user_text in ["ปิดยอดก่อนกำหนด", "ปิดยอด"]:
         send_early_close_qr(user_id, event.reply_token)
-    elif user_text == "ยืนยันปิดยอดชำระแล้ว":
-        process_user_close_early(user_id, event.reply_token)
     else:
         # ระบบค้นหาสัญญาด้วย เบอร์โทร บัตรประชาชน หรือ ชื่อ-สกุล
         search_contract_and_reply(user_id, user_text, event.reply_token)
@@ -398,7 +396,7 @@ def send_contract_status(user_id, reply_token):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early') ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
 
         if not contract:
@@ -431,7 +429,9 @@ def render_flex_contract(contract, reply_token):
         due_day = contract.get('due_day') or 5
 
         footer_contents = []
-        if remaining_count > 0:
+        is_closed = contract['status'] in ['closed', 'closed_early'] or remaining_count == 0
+
+        if not is_closed:
             footer_contents.append({
                 "type": "button",
                 "style": "primary",
@@ -455,7 +455,7 @@ def render_flex_contract(contract, reply_token):
         else:
             footer_contents.append({
                 "type": "text",
-                "text": "ชำระครบถ้วนเรียบร้อยแล้ว",
+                "text": "🔒 ปิดยอดเรียบร้อยแล้ว",
                 "align": "center",
                 "color": "#27ae60",
                 "weight": "bold"
@@ -479,6 +479,7 @@ def render_flex_contract(contract, reply_token):
                         {"type": "text", "text": f"📅 กำหนดชำระทุกวันที่: {due_day} ของเดือน", "size": "sm", "color": "#2980b9", "weight": "bold"},
                         {"type": "text", "text": f"ชำระแล้ว: {paid_count} งวด", "size": "sm", "color": "#27ae60"},
                         {"type": "text", "text": f"คงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)", "size": "sm", "color": "#e74c3c"},
+                        {"type": "text", "text": f"สถานะ: {'🔒 ปิดยอดแล้ว' if is_closed else '🟢 กำลังผ่อนชำระ'}", "size": "sm", "weight": "bold", "color": "#27ae60" if is_closed else "#1DB446"},
                         {"type": "text", "text": f"🔥 ยอดปิดบัญชีทันที (ลด 15%): {discounted_close_amount:,.2f} บาท", "size": "sm", "weight": "bold", "color": "#d35400"}
                     ]}
                 ]
@@ -513,7 +514,7 @@ def send_payment_qr(user_id, installment_no, reply_token):
         if not contract:
             line_bot_api.reply_message(
                 reply_token, 
-                TextSendMessage(text="ไม่พบข้อมูลสัญญาของคุณ กรุณาพิมพ์ เบอร์โทรศัพท์ หรือ เลขบัตรประชาชน เพื่อค้นหาและผูกสัญญาบัญชีก่อนครับ")
+                TextSendMessage(text="ไม่พบข้อมูลสัญญาที่เปิดใช้งานของคุณ หรือสัญญาถูกปิดยอดแล้ว")
             )
             return
 
@@ -561,7 +562,7 @@ def send_early_close_qr(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่กำลังผ่อนชำระ กรุณาพิมพ์ เบอร์โทรศัพท์ เพื่อค้นหาสัญญาครับ"))
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่กำลังผ่อนชำระ หรือสัญญาปิดยอดแล้ว"))
             return
 
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status = 'paid'", (contract['id'],))
@@ -588,12 +589,9 @@ def send_early_close_qr(user_id, reply_token):
             f"• ส่วนลดพิเศษ (15%): -{discount_amount:,.2f} บาท\n"
             f"-------------------------------\n"
             f"💰 ยอดสุทธิที่ต้องชำระปิดบัญชี: {final_pay_amount:,.2f} บาท\n"
-            f"📱 หมายเลขพร้อมเพย์: {promptpay_number}"
+            f"📱 หมายเลขพร้อมเพย์: {promptpay_number}\n\n"
+            f"💡 เมื่อโอนเงินแล้ว กรุณาแจ้งหน้าร้านให้ทำการกดยืนยันปิดยอดในระบบครับ"
         )
-
-        quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="ยืนยันปิดยอดชำระแล้ว", text="ยืนยันปิดยอดชำระแล้ว"))
-        ])
 
         line_bot_api.reply_message(
             reply_token,
@@ -601,57 +599,13 @@ def send_early_close_qr(user_id, reply_token):
                 TextSendMessage(text=msg),
                 ImageSendMessage(
                     original_content_url=qr_image_url,
-                    preview_image_url=qr_image_url,
-                    quick_reply=quick_reply
+                    preview_image_url=qr_image_url
                 )
             ]
         )
     except Exception as err:
         print(f"Error in send_early_close_qr: {err}")
         line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้างรายการปิดยอดก่อนกำหนด"))
-    finally:
-        cursor.close()
-        conn.close()
-
-def process_user_close_early(user_id, reply_token):
-    try:
-        conn = get_db()
-    except Exception:
-        return
-
-    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
-        contract = cursor.fetchone()
-
-        if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่เปิดอยู่"))
-            return
-
-        contract_id = contract['id']
-        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid'", (contract_id,))
-        unpaid_payments = cursor.fetchall()
-
-        if not unpaid_payments:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="สัญญาของคุณได้รับการปิดยอดเรียบร้อยแล้ว"))
-            return
-
-        for p in unpaid_payments:
-            receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
-            cursor.execute("""
-                UPDATE payments 
-                SET status = 'paid', paid_at = %s, receipt_no = %s
-                WHERE id = %s
-            """, (now_str, receipt_no, p['id']))
-
-        cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
-        conn.commit()
-
-        line_bot_api.reply_message(
-            reply_token,
-            TextSendMessage(text=f"✅ ระบบได้รับข้อมูลการปิดยอดก่อนกำหนดเรียบร้อยแล้วเมื่อ {now_str}\nสัญญาเลขที่ {contract['contract_number']} ได้ทำการปิดบัญชี (ส่วนลด 15%) สมบูรณ์แล้ว ขอบคุณครับ!")
-        )
     finally:
         cursor.close()
         conn.close()
