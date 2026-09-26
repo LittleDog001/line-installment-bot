@@ -76,238 +76,67 @@ except Exception as e:
 def home():
     return "LINE Installment Bot is Running with PostgreSQL"
 
-# API ดึงข้อมูลและสร้างสัญญา รองรับทั้ง GET, POST, PUT, DELETE และ Path ทั้งแบบมี/ไม่มี /admin
-@app.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
-@app.route('/admin/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
-def global_get_contracts_api():
+# Route หลักสำหรับดูบิล และดูใบสัญญา (รองรับทั้งเปิดผ่าน /bill, /admin/bill และอื่นๆ)
+@app.route('/bill/<int:payment_id>')
+@app.route('/admin/bill/<int:payment_id>')
+def print_bill_main(payment_id):
     if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+        return "DATABASE_URL is not set", 500
 
     conn = get_db()
     cursor = conn.cursor()
     try:
-        if request.method == 'POST':
-            data = request.get_json() if request.is_json else request.form
-            line_user_id = (data.get('line_user_id') or '').strip()
-            customer_name = (data.get('customer_name') or '').strip()
-            id_card = (data.get('id_card') or '').strip()
-            phone = (data.get('phone') or '').strip()
-            product_name = (data.get('product_name') or '').strip()
-            
-            total_amount = float(data.get('total_amount', 0))
-            total_installments = int(data.get('total_installments', 0))
+        cursor.execute("""
+            SELECT p.*, c.customer_name, c.id_card, c.phone, c.product_name, c.installment_amount, c.contract_number
+            FROM payments p
+            JOIN contracts c ON p.contract_id = c.id
+            WHERE p.id = %s
+        """, (payment_id,))
+        payment = cursor.fetchone()
 
-            if total_installments <= 0 or total_amount <= 0:
-                return jsonify({'error': 'กรุณากรอกข้อมูลยอดเงินและจำนวนงวดให้ถูกต้อง'}), 400
+        if not payment:
+            return "ไม่พบข้อมูลบิลนี้", 404
 
-            installment_amount = total_amount / total_installments
-            contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
+        paid_at = payment['paid_at'] if payment['paid_at'] else datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-            cursor.execute("""
-                INSERT INTO contracts (
-                    contract_number, line_user_id, customer_name, id_card, phone, 
-                    product_name, total_amount, total_installments, installment_amount, status
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
-                RETURNING id
-            """, (
-                contract_number, line_user_id, customer_name, id_card, phone, 
-                product_name, total_amount, total_installments, installment_amount
-            ))
-            
-            contract_row = cursor.fetchone()
-            contract_id = contract_row['id']
-
-            for i in range(1, total_installments + 1):
-                cursor.execute("""
-                    INSERT INTO payments (contract_id, installment_no, amount, status)
-                    VALUES (%s, %s, %s, 'pending')
-                """, (contract_id, i, installment_amount))
-
-            conn.commit()
-            return jsonify({'message': 'บันทึกสัญญาสำเร็จ', 'contract_id': contract_id}), 201
-
-        cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
-        contracts = cursor.fetchall()
-        
-        contract_list = []
-        for c in contracts:
-            c_dict = dict(c)
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
-            payments = [dict(p) for p in cursor.fetchall()]
-            
-            c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
-            c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
-
-            paid_count = sum(1 for p in payments if p['status'] == 'paid')
-            remaining_count = c_dict['total_installments'] - paid_count
-            remaining_amount = float(remaining_count * c_dict['installment_amount'])
-            close_with_discount = remaining_amount * 0.85
-            
-            c_dict['payments'] = payments
-            c_dict['paid_count'] = paid_count
-            c_dict['remaining_count'] = remaining_count
-            c_dict['remaining_amount'] = remaining_amount
-            c_dict['close_with_discount'] = close_with_discount
-            contract_list.append(c_dict)
-
-        return jsonify(contract_list)
-    except Exception as e:
-        conn.rollback()
-        return jsonify({'error': str(e)}), 500
+        return render_template('bill.html', payment=payment, paid_at=paid_at)
     finally:
         cursor.close()
         conn.close()
 
-# API จัดการสัญญาเป็นรายรายการ
-@app.route('/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
-@app.route('/admin/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
-def global_get_contract_detail_api(contract_id):
+@app.route('/contract/doc/<contract_identifier>')
+@app.route('/admin/contract/doc/<contract_identifier>')
+def print_contract_doc(contract_identifier):
     if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
-
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-        contract = cursor.fetchone()
-
-        if not contract:
-            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
-
-        if request.method in ['PUT', 'POST']:
-            data = request.get_json() if request.is_json else request.form
-            line_user_id = (data.get('line_user_id') or '').strip()
-            customer_name = (data.get('customer_name') or '').strip()
-            id_card = (data.get('id_card') or '').strip()
-            phone = (data.get('phone') or '').strip()
-            product_name = (data.get('product_name') or '').strip()
-
-            cursor.execute("""
-                UPDATE contracts 
-                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s
-                WHERE id = %s
-            """, (line_user_id, customer_name, id_card, phone, product_name, contract_id))
-
-            conn.commit()
-            return jsonify({'message': 'แก้ไขสัญญาสำเร็จ', 'contract_id': contract_id})
-
-        elif request.method == 'DELETE':
-            cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
-            conn.commit()
-            return jsonify({'message': 'ลบสัญญาสำเร็จ', 'contract_id': contract_id})
-
-        c_dict = dict(contract)
-        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
-        payments = [dict(p) for p in cursor.fetchall()]
-
-        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
-        c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
-
-        paid_count = sum(1 for p in payments if p['status'] == 'paid')
-        remaining_count = c_dict['total_installments'] - paid_count
-        remaining_amount = float(remaining_count * c_dict['installment_amount'])
-        close_with_discount = remaining_amount * 0.85
-
-        c_dict['payments'] = payments
-        c_dict['paid_count'] = paid_count
-        c_dict['remaining_count'] = remaining_count
-        c_dict['remaining_amount'] = remaining_amount
-        c_dict['close_with_discount'] = close_with_discount
-
-        return jsonify(c_dict)
-    except Exception as e:
-        conn.rollback()
-        return jsonify({'error': str(e)}), 500
-    finally:
-        cursor.close()
-        conn.close()
-
-# API ดึงประวัติค่างวด
-@app.route('/api/payments/<contract_identifier>', methods=['GET'])
-@app.route('/admin/api/payments/<contract_identifier>', methods=['GET'])
-def global_get_payments_by_contract_api(contract_identifier):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+        return "DATABASE_URL is not set", 500
 
     conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE contract_number = %s OR id::text = %s", (contract_identifier, contract_identifier))
         contract = cursor.fetchone()
-        if not contract:
-            return jsonify({'error': 'ไม่พบสัญญา'}), 404
 
-        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
-        payments = [dict(p) for p in cursor.fetchall()]
-        return jsonify(payments)
+        if not contract:
+            return "ไม่พบข้อมูลสัญญา", 404
+
+        return render_template('contract_document.html', contract=contract)
     finally:
         cursor.close()
         conn.close()
 
-# API ชำระค่างวด
+# API ชำระงวด (+งวด) - Global Route
 @app.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
 @app.route('/admin/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
 def global_pay_contract_installment_api(contract_id):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+    from admin_routes import pay_contract_installment_api
+    return pay_contract_installment_api(contract_id)
 
-    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        data = request.get_json() if request.is_json else request.form
-        installment_no = data.get('installment_no')
-
-        if installment_no:
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract_id, int(installment_no)))
-        else:
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1", (contract_id,))
-
-        payment = cursor.fetchone()
-
-        if not payment:
-            return jsonify({'error': 'ไม่พบรายการงวดที่ต้องชำระ'}), 404
-
-        receipt_no = f"REC-{contract_id}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
-        cursor.execute("""
-            UPDATE payments 
-            SET status = 'paid', paid_at = %s, receipt_no = %s
-            WHERE id = %s
-        """, (now_str, receipt_no, payment['id']))
-
-        conn.commit()
-        return jsonify({'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว', 'payment_id': payment['id']})
-    except Exception as e:
-        conn.rollback()
-        return jsonify({'error': str(e)}), 500
-    finally:
-        cursor.close()
-        conn.close()
-
-# API อัปเดตสถานะสัญญา
-@app.route('/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
-@app.route('/admin/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
-def global_update_contract_status_api(contract_id):
-    if not DATABASE_URL:
-        return jsonify({'error': 'DATABASE_URL is not set'}), 500
-
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        data = request.get_json() if request.is_json else request.form
-        status = data.get('status', 'active')
-
-        cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (status, contract_id))
-        conn.commit()
-
-        return jsonify({'message': 'อัปเดตสถานะสัญญาเรียบร้อยแล้ว', 'status': status})
-    except Exception as e:
-        conn.rollback()
-        return jsonify({'error': str(e)}), 500
-    finally:
-        cursor.close()
-        conn.close()
+# API ยกเลิกการชำระ (-งวด) - Global Route
+@app.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+@app.route('/admin/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+def global_unpay_contract_installment_api(contract_id):
+    from admin_routes import unpay_contract_installment_api
+    return unpay_contract_installment_api(contract_id)
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -593,51 +422,6 @@ def process_user_close_early(user_id, reply_token):
             reply_token,
             TextSendMessage(text=f"✅ ระบบได้รับข้อมูลการปิดยอดก่อนกำหนดเรียบร้อยแล้วเมื่อ {now_str}\nสัญญาเลขที่ {contract['contract_number']} ได้ทำการปิดบัญชี (ส่วนลด 15%) สมบูรณ์แล้ว ขอบคุณครับ!")
         )
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.route('/bill/<int:payment_id>')
-def print_bill_main(payment_id):
-    if not DATABASE_URL:
-        return "DATABASE_URL is not set", 500
-
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            SELECT p.*, c.customer_name, c.id_card, c.phone, c.product_name, c.installment_amount
-            FROM payments p
-            JOIN contracts c ON p.contract_id = c.id
-            WHERE p.id = %s
-        """, (payment_id,))
-        payment = cursor.fetchone()
-
-        if not payment:
-            return "ไม่พบข้อมูลบิลนี้", 404
-
-        paid_at = payment['paid_at'] if payment['paid_at'] else datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
-
-        return render_template('bill.html', payment=payment, paid_at=paid_at)
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.route('/contract/doc/<contract_number>')
-def print_contract_doc(contract_number):
-    if not DATABASE_URL:
-        return "DATABASE_URL is not set", 500
-
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE contract_number = %s", (contract_number,))
-        contract = cursor.fetchone()
-
-        if not contract:
-            return "ไม่พบข้อมูลสัญญา", 404
-
-        return render_template('contract_document.html', contract=contract)
     finally:
         cursor.close()
         conn.close()

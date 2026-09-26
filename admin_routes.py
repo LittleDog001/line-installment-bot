@@ -308,8 +308,6 @@ def get_contract_detail_api(contract_id):
         cursor.close()
         conn.close()
 
-# --- API พิเศษสำหรับปุ่มใน JS ของหน้าหลังบ้าน ---
-
 @admin_bp.route('/api/payments/<contract_identifier>', methods=['GET'])
 @admin_bp.route('/payments/<contract_identifier>', methods=['GET'])
 def get_payments_by_contract_api(contract_identifier):
@@ -331,6 +329,7 @@ def get_payments_by_contract_api(contract_identifier):
         cursor.close()
         conn.close()
 
+# API ชำระงวด (+งวด)
 @admin_bp.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
 @admin_bp.route('/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
 def pay_contract_installment_api(contract_id):
@@ -341,8 +340,8 @@ def pay_contract_installment_api(contract_id):
     conn = get_db()
     cursor = conn.cursor()
     try:
-        data = request.get_json() if request.is_json else request.form
-        installment_no = data.get('installment_no')
+        data = request.get_json(silent=True) or request.form
+        installment_no = data.get('installment_no') if data else None
 
         if installment_no:
             cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract_id, int(installment_no)))
@@ -352,7 +351,7 @@ def pay_contract_installment_api(contract_id):
         payment = cursor.fetchone()
 
         if not payment:
-            return jsonify({'error': 'ไม่พบรายการงวดที่ต้องชำระ'}), 404
+            return jsonify({'error': 'ชำระเงินครบหมดแล้ว หรือไม่พบรายการงวด'}), 400
 
         receipt_no = f"REC-{contract_id}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
         cursor.execute("""
@@ -362,7 +361,80 @@ def pay_contract_installment_api(contract_id):
         """, (now_str, receipt_no, payment['id']))
 
         conn.commit()
-        return jsonify({'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว', 'payment_id': payment['id']})
+
+        # คำนวณสรุปข้อมูลใหม่เพื่อส่งกลับไปอัปเดตหน้าบ้านทันที
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
+        all_payments = cursor.fetchall()
+
+        paid_count = sum(1 for p in all_payments if p['status'] == 'paid')
+        remaining_count = contract['total_installments'] - paid_count
+        remaining_amount = float(remaining_count * contract['installment_amount'])
+
+        return jsonify({
+            'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว',
+            'payment_id': payment['id'],
+            'paid_count': paid_count,
+            'remaining_count': remaining_count,
+            'remaining_amount': remaining_amount
+        })
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+# API ยกเลิกการชำระ (-งวด)
+@admin_bp.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+def unpay_contract_installment_api(contract_id):
+    if not DATABASE_URL:
+        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        data = request.get_json(silent=True) or request.form
+        installment_no = data.get('installment_no') if data else None
+
+        if installment_no:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract_id, int(installment_no)))
+        else:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status = 'paid' ORDER BY installment_no DESC LIMIT 1", (contract_id,))
+
+        payment = cursor.fetchone()
+
+        if not payment:
+            return jsonify({'error': 'ยังไม่มีรายการที่ชำระเงิน หรือไม่พบงวดที่จะยกเลิก'}), 400
+
+        cursor.execute("""
+            UPDATE payments 
+            SET status = 'pending', paid_at = NULL, receipt_no = NULL
+            WHERE id = %s
+        """, (payment['id'],))
+
+        # หากสัญญาเคยขึ้น closed_early ให้ปรับกลับเป็น active
+        cursor.execute("UPDATE contracts SET status = 'active' WHERE id = %s AND status = 'closed_early'", (contract_id,))
+
+        conn.commit()
+
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
+        all_payments = cursor.fetchall()
+
+        paid_count = sum(1 for p in all_payments if p['status'] == 'paid')
+        remaining_count = contract['total_installments'] - paid_count
+        remaining_amount = float(remaining_count * contract['installment_amount'])
+
+        return jsonify({
+            'message': f'ยกเลิกการชำระงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว',
+            'paid_count': paid_count,
+            'remaining_count': remaining_count,
+            'remaining_amount': remaining_amount
+        })
     except Exception as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 500
@@ -379,8 +451,8 @@ def update_contract_status_api(contract_id):
     conn = get_db()
     cursor = conn.cursor()
     try:
-        data = request.get_json() if request.is_json else request.form
-        status = data.get('status', 'active')
+        data = request.get_json(silent=True) or request.form
+        status = data.get('status', 'active') if data else 'active'
 
         cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (status, contract_id))
         conn.commit()
