@@ -136,6 +136,55 @@ def root_api_update_contract_status(contract_id):
         cursor.close()
         conn.close()
 
+@app.route('/api/contracts/<int:contract_id>/close_early', methods=['POST', 'PUT'])
+def root_api_close_contract_early(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid'", (contract_id,))
+        unpaid_payments = cursor.fetchall()
+
+        for p in unpaid_payments:
+            receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+            cursor.execute("""
+                UPDATE payments 
+                SET status = 'paid', paid_at = %s, receipt_no = %s
+                WHERE id = %s
+            """, (now_str, receipt_no, p['id']))
+
+        cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
+        conn.commit()
+
+        # ส่งข้อความขอบคุณไปยัง LINE ของลูกค้า
+        if contract.get('line_user_id'):
+            thank_msg = (
+                f"🎉 ขอขอบพระคุณเป็นอย่างยิ่งครับ!\n"
+                f"-------------------------------\n"
+                f"📦 สินค้า: {contract['product_name']}\n"
+                f"เลขที่สัญญา: {contract['contract_number']}\n\n"
+                f"ทางร้านได้ทำการบันทึกยืนยันการปิดยอดสัญญาเรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเราครับ 🙏✨"
+            )
+            send_simple_push_notification(contract['line_user_id'], thank_msg)
+
+        return jsonify({'message': 'บันทึกการปิดยอดสัญญาสำเร็จ'})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
 @app.route('/api/payments/<contract_identifier>', methods=['GET'])
 def root_api_payments(contract_identifier):
     return process_payments_by_contract_api(contract_identifier)
@@ -237,6 +286,12 @@ def check_due_notifications():
     finally:
         cursor.close()
         conn.close()
+
+def send_simple_push_notification(user_id, text_msg):
+    try:
+        line_bot_api.push_message(user_id, TextSendMessage(text=text_msg))
+    except Exception as e:
+        print(f"Error sending Simple Push Message to {user_id}: {e}")
 
 def send_line_push_notification(user_id, text_msg, installment_no, amount):
     try:
@@ -497,7 +552,7 @@ def render_flex_contract(contract, reply_token):
         cursor.close()
         conn.close()
 
-def send_payment_qr(user_id, installment_no, reply_token):
+def send_payment_qr(user_id, reply_token):
     try:
         conn = get_db()
     except Exception as e:

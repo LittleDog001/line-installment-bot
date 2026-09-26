@@ -4,9 +4,29 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from linebot import LineBotApi
+from linebot.models import TextSendMessage
 
 admin_bp = Blueprint('admin', __name__)
 TH_TZ = ZoneInfo('Asia/Bangkok')
+
+LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+
+def send_push_thank_you(user_id, contract_number, product_name):
+    if not user_id:
+        return
+    try:
+        msg = (
+            f"🎉 ขอขอบพระคุณเป็นอย่างยิ่งครับ!\n"
+            f"-------------------------------\n"
+            f"📦 สินค้า: {product_name}\n"
+            f"เลขที่สัญญา: {contract_number}\n\n"
+            f"ท่านได้ดำเนินการชำระเงินและปิดยอดสัญญาครบถ้วนเรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเราครับ 🙏✨"
+        )
+        line_bot_api.push_message(user_id, TextSendMessage(text=msg))
+    except Exception as e:
+        print(f"Error sending thank you message to {user_id}: {e}")
 
 def get_db():
     db_url = os.environ.get('DATABASE_URL')
@@ -375,6 +395,8 @@ def pay_contract_installment_api(contract_id):
         if remaining_count == 0:
             cursor.execute("UPDATE contracts SET status = 'closed' WHERE id = %s", (contract_id,))
             conn.commit()
+            # ส่งข้อความขอบคุณเนื่องจากจ่ายครบทุกงวดตามสัญญา
+            send_push_thank_you(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
 
         return jsonify({
             'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว',
@@ -502,6 +524,9 @@ def close_contract_early_api(contract_id):
 
         cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
         conn.commit()
+
+        # ส่งข้อความขอบคุณไปยัง LINE ของลูกค้า
+        send_push_thank_you(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
 
         return jsonify({'message': 'บันทึกการปิดยอดสัญญาสำเร็จ'})
     except Exception as e:
