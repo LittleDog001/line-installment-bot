@@ -11,7 +11,10 @@ from linebot.models import (
 )
 from promptpay import qrcode
 
+from admin_routes import admin_bp
+
 app = Flask(__name__)
+app.register_blueprint(admin_bp, url_prefix='/admin')
 
 TH_TZ = ZoneInfo('Asia/Bangkok')
 
@@ -29,6 +32,7 @@ def get_db():
 
 def init_db():
     if not DATABASE_URL:
+        print("DATABASE_URL is not set. Skipping DB initialization.")
         return
     conn = get_db()
     cursor = conn.cursor()
@@ -63,11 +67,53 @@ def init_db():
     cursor.close()
     conn.close()
 
-init_db()
+try:
+    init_db()
+except Exception as e:
+    print(f"Database initialization error: {e}")
 
 @app.route("/")
 def home():
     return "LINE Installment Bot is Running with PostgreSQL"
+
+# API ดึงข้อมูลสัญญา สำหรับรองรับ JavaScript จาก admin.html (ทั้ง /api/contracts และ /admin/api/contracts)
+@app.route('/api/contracts', methods=['GET'])
+@app.route('/admin/api/contracts', methods=['GET'])
+def global_get_contracts_api():
+    if not DATABASE_URL:
+        return jsonify({'error': 'DATABASE_URL is not set'}), 500
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
+        contracts = cursor.fetchall()
+        
+        contract_list = []
+        for c in contracts:
+            c_dict = dict(c)
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
+            payments = [dict(p) for p in cursor.fetchall()]
+            
+            c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
+            c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
+
+            paid_count = sum(1 for p in payments if p['status'] == 'paid')
+            remaining_count = c_dict['total_installments'] - paid_count
+            remaining_amount = float(remaining_count * c_dict['installment_amount'])
+            close_with_discount = remaining_amount * 0.85
+            
+            c_dict['payments'] = payments
+            c_dict['paid_count'] = paid_count
+            c_dict['remaining_count'] = remaining_count
+            c_dict['remaining_amount'] = remaining_amount
+            c_dict['close_with_discount'] = close_with_discount
+            contract_list.append(c_dict)
+
+        return jsonify(contract_list)
+    finally:
+        cursor.close()
+        conn.close()
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -84,7 +130,7 @@ def handle_message(event):
     user_text = event.message.text.strip()
     user_id = event.source.user_id
 
-    if user_text in ["เช็คยอด", "เช็คค่างวด", "เมนู"]:
+    if user_text in ["เช็คยอด", "เช็คค่างวด", "เมนู", "สัญญา"]:
         send_contract_status(user_id, event.reply_token)
     elif user_text.startswith("ชำระงวดที่"):
         try:
@@ -109,279 +155,298 @@ def handle_message(event):
         )
 
 def send_contract_status(user_id, reply_token):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
-    contract = cursor.fetchone()
-
-    if not contract:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาผ่อนชำระของคุณในระบบ"))
-        cursor.close()
-        conn.close()
+    if not DATABASE_URL:
         return
 
-    cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
-    payments = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
 
-    paid_count = sum(1 for p in payments if p['status'] == 'paid')
-    remaining_count = contract['total_installments'] - paid_count
-    remaining_balance = float(remaining_count * contract['installment_amount'])
-    discounted_close_amount = remaining_balance * 0.85 if remaining_balance > 0 else 0
+        if not contract:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาผ่อนชำระของคุณในระบบ"))
+            return
 
-    footer_contents = []
-    if remaining_count > 0:
-        footer_contents.append({
-            "type": "button",
-            "style": "primary",
-            "color": "#1DB446",
-            "action": {
-                "type": "message",
-                "label": f"จ่ายงวดที่ {paid_count + 1} ({float(contract['installment_amount']):,.2f} บ.)",
-                "text": f"ชำระงวดที่ {paid_count + 1}"
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
+        payments = cursor.fetchall()
+
+        paid_count = sum(1 for p in payments if p['status'] == 'paid')
+        remaining_count = contract['total_installments'] - paid_count
+        remaining_balance = float(remaining_count * contract['installment_amount'])
+        discounted_close_amount = remaining_balance * 0.85 if remaining_balance > 0 else 0
+
+        footer_contents = []
+        if remaining_count > 0:
+            footer_contents.append({
+                "type": "button",
+                "style": "primary",
+                "color": "#1DB446",
+                "action": {
+                    "type": "message",
+                    "label": f"จ่ายงวดที่ {paid_count + 1} ({float(contract['installment_amount']):,.2f} บ.)",
+                    "text": f"ชำระงวดที่ {paid_count + 1}"
+                }
+            })
+            footer_contents.append({
+                "type": "button",
+                "style": "secondary",
+                "color": "#e67e22",
+                "action": {
+                    "type": "message",
+                    "label": "ปิดยอดทั้งหมด (ส่วนลด 15%)",
+                    "text": "ปิดยอดก่อนกำหนด"
+                }
+            })
+        else:
+            footer_contents.append({
+                "type": "text",
+                "text": "ชำระครบถ้วนเรียบร้อยแล้ว",
+                "align": "center",
+                "color": "#27ae60",
+                "weight": "bold"
+            })
+
+        flex_contents = {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": "รายการผ่อนชำระของคุณ", "weight": "bold", "size": "xl", "color": "#1DB446"},
+                    {"type": "text", "text": f"สินค้า: {contract['product_name']}", "size": "md", "margin": "md", "weight": "bold"},
+                    {"type": "separator", "margin": "md"},
+                    {"type": "box", "layout": "vertical", "margin": "md", "spacing": "sm", "contents": [
+                        {"type": "text", "text": f"ผู้กู้/ผู้ผ่อน: {contract['customer_name']}", "size": "sm"},
+                        {"type": "text", "text": f"เลขบัตรประชาชน: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"งวดทั้งหมด: {contract['total_installments']} งวด", "size": "sm"},
+                        {"type": "text", "text": f"ชำระแล้ว: {paid_count} งวด", "size": "sm", "color": "#27ae60"},
+                        {"type": "text", "text": f"คงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)", "size": "sm", "color": "#e74c3c"},
+                        {"type": "text", "text": f"🔥 ยอดปิดบัญชีทันที (ลด 15%): {discounted_close_amount:,.2f} บาท", "size": "sm", "weight": "bold", "color": "#d35400"}
+                    ]}
+                ]
+            },
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": footer_contents
             }
-        })
-        footer_contents.append({
-            "type": "button",
-            "style": "secondary",
-            "color": "#e67e22",
-            "action": {
-                "type": "message",
-                "label": "ปิดยอดทั้งหมด (ส่วนลด 15%)",
-                "text": "ปิดยอดก่อนกำหนด"
-            }
-        })
-    else:
-        footer_contents.append({
-            "type": "text",
-            "text": "ชำระครบถ้วนเรียบร้อยแล้ว",
-            "align": "center",
-            "color": "#27ae60",
-            "weight": "bold"
-        })
-
-    flex_contents = {
-        "type": "bubble",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": "รายการผ่อนชำระของคุณ", "weight": "bold", "size": "xl", "color": "#1DB446"},
-                {"type": "text", "text": f"สินค้า: {contract['product_name']}", "size": "md", "margin": "md", "weight": "bold"},
-                {"type": "separator", "margin": "md"},
-                {"type": "box", "layout": "vertical", "margin": "md", "spacing": "sm", "contents": [
-                    {"type": "text", "text": f"ผู้กู้/ผู้ผ่อน: {contract['customer_name']}", "size": "sm"},
-                    {"type": "text", "text": f"เลขบัตรประชาชน: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
-                    {"type": "text", "text": f"งวดทั้งหมด: {contract['total_installments']} งวด", "size": "sm"},
-                    {"type": "text", "text": f"ชำระแล้ว: {paid_count} งวด", "size": "sm", "color": "#27ae60"},
-                    {"type": "text", "text": f"คงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)", "size": "sm", "color": "#e74c3c"},
-                    {"type": "text", "text": f"🔥 ยอดปิดบัญชีทันที (ลด 15%): {discounted_close_amount:,.2f} บาท", "size": "sm", "weight": "bold", "color": "#d35400"}
-                ]}
-            ]
-        },
-        "footer": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "sm",
-            "contents": footer_contents
         }
-    }
 
-    line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text="สถานะสัญญาชำระเงิน", contents=flex_contents))
+        line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text="สถานะสัญญาชำระเงิน", contents=flex_contents))
+    finally:
+        cursor.close()
+        conn.close()
 
 def send_payment_qr(user_id, installment_no, reply_token):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
-    contract = cursor.fetchone()
-    cursor.close()
-    conn.close()
-
-    if not contract:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญา"))
+    if not DATABASE_URL:
         return
 
-    amount = float(contract['installment_amount'])
-    qr_payload = qrcode.generate_payload(PROMPTPAY_ID, amount)
-    qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_payload}"
-
-    line_bot_api.reply_message(
-        reply_token,
-        [
-            TextSendMessage(text=f"สแกนเพื่อชำระค่างวดที่ {installment_no}\nยอดชำระ: {amount:,.2f} บาท\nพร้อมเพย์: {PROMPTPAY_ID}"),
-            FlexSendMessage(
-                alt_text="QR Code ชำระเงิน",
-                contents={
-                    "type": "bubble",
-                    "body": {
-                        "type": "box",
-                        "layout": "vertical",
-                        "contents": [
-                            {"type": "text", "text": f"QR Code งวดที่ {installment_no}", "weight": "bold", "align": "center"},
-                            {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
-                        ]
-                    }
-                }
-            )
-        ]
-    )
-
-def send_early_close_qr(user_id, reply_token):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
-    contract = cursor.fetchone()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
 
-    if not contract:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่กำลังผ่อนชำระ"))
+        if not contract:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญา"))
+            return
+
+        amount = float(contract['installment_amount'])
+        qr_payload = qrcode.generate_payload(PROMPTPAY_ID, amount)
+        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_payload}"
+
+        line_bot_api.reply_message(
+            reply_token,
+            [
+                TextSendMessage(text=f"สแกนเพื่อชำระค่างวดที่ {installment_no}\nยอดชำระ: {amount:,.2f} บาท\nพร้อมเพย์: {PROMPTPAY_ID}"),
+                FlexSendMessage(
+                    alt_text="QR Code ชำระเงิน",
+                    contents={
+                        "type": "bubble",
+                        "body": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "contents": [
+                                {"type": "text", "text": f"QR Code งวดที่ {installment_no}", "weight": "bold", "align": "center"},
+                                {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
+                            ]
+                        }
+                    }
+                )
+            ]
+        )
+    finally:
         cursor.close()
         conn.close()
+
+def send_early_close_qr(user_id, reply_token):
+    if not DATABASE_URL:
         return
 
-    cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status = 'paid'", (contract['id'],))
-    paid_payments = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
 
-    paid_count = len(paid_payments)
-    remaining_count = contract['total_installments'] - paid_count
+        if not contract:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่กำลังผ่อนชำระ"))
+            return
 
-    if remaining_count <= 0:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="คุณได้ชำระค่างวดครบถ้วนแล้ว ไม่มียอดคงเหลือ"))
-        return
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status = 'paid'", (contract['id'],))
+        paid_payments = cursor.fetchall()
 
-    remaining_balance = float(remaining_count * contract['installment_amount'])
-    discount_amount = remaining_balance * 0.15
-    final_pay_amount = remaining_balance - discount_amount
+        paid_count = len(paid_payments)
+        remaining_count = contract['total_installments'] - paid_count
 
-    qr_payload = qrcode.generate_payload(PROMPTPAY_ID, final_pay_amount)
-    qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_payload}"
+        if remaining_count <= 0:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="คุณได้ชำระค่างวดครบถ้วนแล้ว ไม่มียอดคงเหลือ"))
+            return
 
-    msg = (
-        f"🎉 ข้อเสนอพิเศษปิดยอดก่อนกำหนด\n"
-        f"• ยอดคงเหลือคงค้าง ({remaining_count} งวด): {remaining_balance:,.2f} บาท\n"
-        f"• ส่วนลดพิเศษ (15%): -{discount_amount:,.2f} บาท\n"
-        f"-------------------------------\n"
-        f"💰 ยอดสุทธิที่ต้องชำระปิดบัญชี: {final_pay_amount:,.2f} บาท"
-    )
+        remaining_balance = float(remaining_count * contract['installment_amount'])
+        discount_amount = remaining_balance * 0.15
+        final_pay_amount = remaining_balance - discount_amount
 
-    line_bot_api.reply_message(
-        reply_token,
-        [
-            TextSendMessage(text=msg),
-            FlexSendMessage(
-                alt_text="QR Code ปิดยอดก่อนกำหนด",
-                contents={
-                    "type": "bubble",
-                    "body": {
-                        "type": "box",
-                        "layout": "vertical",
-                        "contents": [
-                            {"type": "text", "text": "สแกนชำระปิดยอด (ลด 15%)", "weight": "bold", "align": "center", "color": "#e67e22"},
-                            {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
-                        ]
-                    },
-                    "footer": {
-                        "type": "box",
-                        "layout": "vertical",
-                        "contents": [
-                            {
-                                "type": "button",
-                                "style": "primary",
-                                "color": "#e67e22",
-                                "action": {
-                                    "type": "message",
-                                    "label": "ยืนยันปิดยอด (หลังชำระเงิน)",
-                                    "text": "ยืนยันปิดยอดชำระแล้ว"
+        qr_payload = qrcode.generate_payload(PROMPTPAY_ID, final_pay_amount)
+        qr_image_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_payload}"
+
+        msg = (
+            f"🎉 ข้อเสนอพิเศษปิดยอดก่อนกำหนด\n"
+            f"• ยอดคงเหลือคงค้าง ({remaining_count} งวด): {remaining_balance:,.2f} บาท\n"
+            f"• ส่วนลดพิเศษ (15%): -{discount_amount:,.2f} บาท\n"
+            f"-------------------------------\n"
+            f"💰 ยอดสุทธิที่ต้องชำระปิดบัญชี: {final_pay_amount:,.2f} บาท"
+        )
+
+        line_bot_api.reply_message(
+            reply_token,
+            [
+                TextSendMessage(text=msg),
+                FlexSendMessage(
+                    alt_text="QR Code ปิดยอดก่อนกำหนด",
+                    contents={
+                        "type": "bubble",
+                        "body": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "contents": [
+                                {"type": "text", "text": "สแกนชำระปิดยอด (ลด 15%)", "weight": "bold", "align": "center", "color": "#e67e22"},
+                                {"type": "image", "url": qr_image_url, "size": "5l", "aspectRatio": "1:1"}
+                            ]
+                        },
+                        "footer": {
+                            "type": "box",
+                            "layout": "vertical",
+                            "contents": [
+                                {
+                                    "type": "button",
+                                    "style": "primary",
+                                    "color": "#e67e22",
+                                    "action": {
+                                        "type": "message",
+                                        "label": "ยืนยันปิดยอด (หลังชำระเงิน)",
+                                        "text": "ยืนยันปิดยอดชำระแล้ว"
+                                    }
                                 }
-                            }
-                        ]
+                            ]
+                        }
                     }
-                }
-            )
-        ]
-    )
+                )
+            ]
+        )
+    finally:
+        cursor.close()
+        conn.close()
 
 def process_user_close_early(user_id, reply_token):
+    if not DATABASE_URL:
+        return
+
     now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
     
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
-    contract = cursor.fetchone()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
 
-    if not contract:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่เปิดอยู่"))
+        if not contract:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบข้อมูลสัญญาที่เปิดอยู่"))
+            return
+
+        contract_id = contract['id']
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid'", (contract_id,))
+        unpaid_payments = cursor.fetchall()
+
+        if not unpaid_payments:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text="สัญญาของคุณได้รับการปิดยอดเรียบร้อยแล้ว"))
+            return
+
+        for p in unpaid_payments:
+            receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+            cursor.execute("""
+                UPDATE payments 
+                SET status = 'paid', paid_at = %s, receipt_no = %s
+                WHERE id = %s
+            """, (now_str, receipt_no, p['id']))
+
+        cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
+        conn.commit()
+
+        line_bot_api.reply_message(
+            reply_token,
+            TextSendMessage(text=f"✅ ระบบได้รับข้อมูลการปิดยอดก่อนกำหนดเรียบร้อยแล้วเมื่อ {now_str}\nสัญญาเลขที่ {contract['contract_number']} ได้ทำการปิดบัญชี (ส่วนลด 15%) สมบูรณ์แล้ว ขอบคุณครับ!")
+        )
+    finally:
         cursor.close()
         conn.close()
-        return
-
-    contract_id = contract['id']
-    cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid'", (contract_id,))
-    unpaid_payments = cursor.fetchall()
-
-    if not unpaid_payments:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="สัญญาของคุณได้รับการปิดยอดเรียบร้อยแล้ว"))
-        cursor.close()
-        conn.close()
-        return
-
-    for p in unpaid_payments:
-        receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
-        cursor.execute("""
-            UPDATE payments 
-            SET status = 'paid', paid_at = %s, receipt_no = %s
-            WHERE id = %s
-        """, (now_str, receipt_no, p['id']))
-
-    cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    line_bot_api.reply_message(
-        reply_token,
-        TextSendMessage(text=f"✅ ระบบได้รับข้อมูลการปิดยอดก่อนกำหนดเรียบร้อยแล้วเมื่อ {now_str}\nสัญญาเลขที่ {contract['contract_number']} ได้ทำการปิดบัญชี (ส่วนลด 15%) สมบูรณ์แล้ว ขอบคุณครับ!")
-    )
-
-from admin_routes import admin_bp
-app.register_blueprint(admin_bp, url_prefix='/admin')
 
 @app.route('/bill/<int:payment_id>')
 def print_bill_main(payment_id):
+    if not DATABASE_URL:
+        return "DATABASE_URL is not set", 500
+
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.*, c.customer_name, c.id_card, c.phone, c.product_name, c.installment_amount
-        FROM payments p
-        JOIN contracts c ON p.contract_id = c.id
-        WHERE p.id = %s
-    """, (payment_id,))
-    payment = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    try:
+        cursor.execute("""
+            SELECT p.*, c.customer_name, c.id_card, c.phone, c.product_name, c.installment_amount
+            FROM payments p
+            JOIN contracts c ON p.contract_id = c.id
+            WHERE p.id = %s
+        """, (payment_id,))
+        payment = cursor.fetchone()
 
-    if not payment:
-        return "ไม่พบข้อมูลบิลนี้", 404
+        if not payment:
+            return "ไม่พบข้อมูลบิลนี้", 404
 
-    paid_at = payment['paid_at'] if payment['paid_at'] else datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+        paid_at = payment['paid_at'] if payment['paid_at'] else datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-    return render_template('bill.html', payment=payment, paid_at=paid_at)
+        return render_template('bill.html', payment=payment, paid_at=paid_at)
+    finally:
+        cursor.close()
+        conn.close()
 
 @app.route('/contract/doc/<contract_number>')
 def print_contract_doc(contract_number):
+    if not DATABASE_URL:
+        return "DATABASE_URL is not set", 500
+
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM contracts WHERE contract_number = %s", (contract_number,))
-    contract = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE contract_number = %s", (contract_number,))
+        contract = cursor.fetchone()
 
-    if not contract:
-        return "ไม่พบข้อมูลสัญญา", 404
+        if not contract:
+            return "ไม่พบข้อมูลสัญญา", 404
 
-    return render_template('contract_document.html', contract=contract)
+        return render_template('contract_document.html', contract=contract)
+    finally:
+        cursor.close()
+        conn.close()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

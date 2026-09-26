@@ -1,96 +1,167 @@
 import os
-import json
 import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
-from flask import Flask, request, jsonify, render_template
-from linebot.v3 import WebhookHandler
-from linebot.v3.exceptions import InvalidSignatureError
-from linebot.v3.messaging import (
-    Configuration,
-    ApiClient,
-    MessagingApi,
-    ReplyMessageRequest,
-    TextMessage,
-    FlexMessage,
-    FlexContainer
-)
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from flask import Blueprint, render_template, request, redirect, url_for, jsonify
 
-from admin_routes import admin_bp
-
-app = Flask(__name__)
-app.register_blueprint(admin_bp, url_prefix='/admin')
-
-LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
-LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
+admin_bp = Blueprint('admin', __name__)
 DATABASE_URL = os.environ.get('DATABASE_URL')
 TH_TZ = ZoneInfo('Asia/Bangkok')
-
-configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 def get_db():
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
-def init_db():
+@admin_bp.route('/')
+def index():
     if not DATABASE_URL:
-        print("DATABASE_URL is not set. Skipping DB initialization.")
-        return
-    
+        return "DATABASE_URL is not set", 500
+
     conn = get_db()
     cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS contracts (
-            id SERIAL PRIMARY KEY,
-            contract_number TEXT UNIQUE NOT NULL,
-            line_user_id TEXT,
-            customer_name TEXT NOT NULL,
-            id_card TEXT,
-            phone TEXT,
-            product_name TEXT NOT NULL,
-            total_amount NUMERIC(12, 2) NOT NULL,
-            total_installments INT NOT NULL,
-            installment_amount NUMERIC(12, 2) NOT NULL,
-            status TEXT DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS payments (
-            id SERIAL PRIMARY KEY,
-            contract_id INT REFERENCES contracts(id) ON DELETE CASCADE,
-            installment_no INT NOT NULL,
-            amount NUMERIC(12, 2) NOT NULL,
-            status TEXT DEFAULT 'pending',
-            paid_at TEXT,
-            receipt_no TEXT,
-            slip_url TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
+        contracts = cursor.fetchall()
+        
+        contract_list = []
+        for c in contracts:
+            c_dict = dict(c)
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
+            payments = cursor.fetchall()
+            
+            c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
+            c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
 
-try:
-    init_db()
-except Exception as e:
-    print(f"Database initialization error: {e}")
+            paid_count = sum(1 for p in payments if p['status'] == 'paid')
+            remaining_count = c_dict['total_installments'] - paid_count
+            remaining_amount = float(remaining_count * c_dict['installment_amount'])
+            close_with_discount = remaining_amount * 0.85
+            
+            c_dict['payments'] = payments
+            c_dict['paid_count'] = paid_count
+            c_dict['remaining_count'] = remaining_count
+            c_dict['remaining_amount'] = remaining_amount
+            c_dict['close_with_discount'] = close_with_discount
+            contract_list.append(c_dict)
 
-@app.route('/')
-def home():
-    return "LINE Installment Bot is Running with PostgreSQL"
+        return render_template('admin.html', contracts=contract_list)
+    finally:
+        cursor.close()
+        conn.close()
 
-# API รองรับ JavaScript จาก admin.html ดึงข้อมูลสัญญา
-@app.route('/api/contracts', methods=['GET'])
-@app.route('/admin/api/contracts', methods=['GET'])
-def global_get_contracts_api():
+@admin_bp.route('/contract/create', methods=['POST'])
+def create_contract():
+    if not DATABASE_URL:
+        return "DATABASE_URL is not set", 500
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        line_user_id = (request.form.get('line_user_id') or '').strip()
+        customer_name = (request.form.get('customer_name') or '').strip()
+        id_card = (request.form.get('id_card') or '').strip()
+        phone = (request.form.get('phone') or '').strip()
+        product_name = (request.form.get('product_name') or '').strip()
+        
+        raw_total = request.form.get('total_amount', 0)
+        raw_installments = request.form.get('total_installments', 0)
+
+        total_amount = float(raw_total) if raw_total else 0.0
+        total_installments = int(raw_installments) if raw_installments else 0
+
+        if total_installments <= 0 or total_amount <= 0:
+            return "กรุณากรอกยอดเงินรวมและจำนวนงวดให้ถูกต้อง (ต้องมากกว่า 0)", 400
+
+        installment_amount = total_amount / total_installments
+        contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
+
+        cursor.execute("""
+            INSERT INTO contracts (
+                contract_number, line_user_id, customer_name, id_card, phone, 
+                product_name, total_amount, total_installments, installment_amount, status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
+            RETURNING id
+        """, (
+            contract_number, line_user_id, customer_name, id_card, phone, 
+            product_name, total_amount, total_installments, installment_amount
+        ))
+        
+        contract_row = cursor.fetchone()
+        contract_id = contract_row['id']
+
+        for i in range(1, total_installments + 1):
+            cursor.execute("""
+                INSERT INTO payments (contract_id, installment_no, amount, status)
+                VALUES (%s, %s, %s, 'pending')
+            """, (contract_id, i, installment_amount))
+
+        conn.commit()
+        return redirect(url_for('admin.index'))
+
+    except Exception as e:
+        conn.rollback()
+        return f"เกิดข้อผิดพลาดในการบันทึกสัญญา: {str(e)}", 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/payment/<int:payment_id>/confirm', methods=['POST'])
+def confirm_payment(payment_id):
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM payments WHERE id = %s", (payment_id,))
+        payment = cursor.fetchone()
+        
+        if payment:
+            receipt_no = f"REC-{payment['contract_id']}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+            cursor.execute("""
+                UPDATE payments 
+                SET status = 'paid', paid_at = %s, receipt_no = %s
+                WHERE id = %s
+            """, (now_str, receipt_no, payment_id))
+            conn.commit()
+
+        return redirect(url_for('admin.index'))
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/contract/<int:contract_id>/close_early', methods=['POST'])
+def close_contract_early(contract_id):
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+        
+        if contract:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s", (contract_id,))
+            payments = cursor.fetchall()
+            unpaid_payments = [p for p in payments if p['status'] != 'paid']
+            
+            for p in unpaid_payments:
+                receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+                cursor.execute("""
+                    UPDATE payments 
+                    SET status = 'paid', paid_at = %s, receipt_no = %s
+                    WHERE id = %s
+                """, (now_str, receipt_no, p['id']))
+            
+            cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
+            conn.commit()
+
+        return redirect(url_for('admin.index'))
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts', methods=['GET'])
+def get_contracts_api():
     if not DATABASE_URL:
         return jsonify({'error': 'DATABASE_URL is not set'}), 500
 
@@ -126,81 +197,6 @@ def global_get_contracts_api():
         cursor.close()
         conn.close()
 
-@app.route("/callback", methods=['POST'])
-def callback():
-    signature = request.headers.get('X-Line-Signature', '')
-    body = request.get_data(as_text=True)
-
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        return 'Invalid signature. Please check your channel access token/secret.', 400
-    except Exception as e:
-        print(f"Callback error: {e}")
-        return 'Internal Server Error', 500
-
-    return 'OK'
-
-@handler.add(MessageEvent, message=TextMessageContent)
-def handle_text_message(event):
-    user_id = event.source.user_id
-    user_text = event.message.text.strip()
-
-    if user_text in ["เช็คค่างวด", "ผ่อน", "ชำระเงิน"]:
-        reply_user_contracts(event, user_id)
-
-def reply_user_contracts(event, user_id):
-    if not DATABASE_URL:
-        return
-
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active'", (user_id,))
-        contracts = cursor.fetchall()
-
-        if not contracts:
-            msg = "ไม่พบข้อมูลสัญญาผ่อนชำระของคุณในระบบค่ะ"
-            with ApiClient(configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                line_bot_api.reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(text=msg)]
-                    )
-                )
-            return
-
-        for contract in contracts:
-            c_dict = dict(contract)
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c_dict['id'],))
-            payments = cursor.fetchall()
-
-            paid_count = sum(1 for p in payments if p['status'] == 'paid')
-            next_payment = next((p for p in payments if p['status'] != 'paid'), None)
-
-            msg = f"📄 สัญญาเลขที่: {c_dict['contract_number']}\n"
-            msg += f"📦 สินค้า: {c_dict['product_name']}\n"
-            msg += f"📊 ผ่อนไปแล้ว: {paid_count}/{c_dict['total_installments']} งวด\n"
-            
-            if next_payment:
-                msg += f"🔹 งวดถัดไป: งวดที่ {next_payment['installment_no']}\n"
-                msg += f"💰 ยอดที่ต้องชำระ: {float(next_payment['amount']):,.2f} บาท"
-            else:
-                msg += "🎉 คุณชำระครบทุกงวดแล้ว ขอบคุณค่ะ!"
-
-            with ApiClient(configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                line_bot_api.reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(text=msg)]
-                    )
-                )
-
-    finally:
-        cursor.close()
-        conn.close()
-
-if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+@admin_bp.route('/contracts', methods=['GET'])
+def get_contracts_api_alt():
+    return get_contracts_api()
