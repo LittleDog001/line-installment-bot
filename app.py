@@ -115,7 +115,7 @@ def print_bill_main(payment_id):
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            SELECT p.*, c.customer_name, c.id_card, c.phone, c.product_name, c.installment_amount, c.contract_number
+            SELECT p.*, c.customer_name, c.id_card, c.phone, c.product_name, c.installment_amount, c.contract_number, c.total_installments
             FROM payments p
             JOIN contracts c ON p.contract_id = c.id
             WHERE p.id = %s
@@ -131,7 +131,7 @@ def print_bill_main(payment_id):
 
         paid_at = payment['paid_at'] if payment['paid_at'] else datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-        return render_template('bill.html', payment=payment, paid_at=paid_at)
+        return render_template('bill.html', p=payment, payment=payment, paid_at=paid_at)
     except Exception as e:
         return f"Error loading bill: {str(e)}", 500
     finally:
@@ -157,8 +157,13 @@ def print_contract_doc(contract_identifier):
         contract = dict(contract_row)
         contract['total_amount'] = float(contract['total_amount']) if contract['total_amount'] is not None else 0.0
         contract['installment_amount'] = float(contract['installment_amount']) if contract['installment_amount'] is not None else 0.0
+        
+        # เพิ่ม monthly_amount และส่งตัวแปร c ให้ตรงตาม contract_document.html
+        contract['monthly_amount'] = contract['installment_amount']
+        if contract.get('created_at'):
+            contract['created_at'] = str(contract['created_at'])
 
-        return render_template('contract_document.html', contract=contract)
+        return render_template('contract_document.html', c=contract, contract=contract)
     except Exception as e:
         return f"Error loading contract doc: {str(e)}", 500
     finally:
