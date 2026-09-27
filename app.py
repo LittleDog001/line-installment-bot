@@ -1,6 +1,7 @@
 import os
 import io
 import datetime
+import calendar
 import urllib.parse
 import psycopg2
 import werkzeug
@@ -31,6 +32,11 @@ PROMPTPAY_ID = os.environ.get('PROMPTPAY_ID', '0800000000')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+THAI_MONTHS = [
+    "", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+    "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+]
 
 def get_db():
     db_url = os.environ.get('DATABASE_URL')
@@ -93,6 +99,25 @@ try:
     init_db()
 except Exception as e:
     print(f"Database initialization error: {e}")
+
+def get_installment_due_date(created_at, due_day, installment_no):
+    if isinstance(created_at, str):
+        try:
+            created_at = datetime.datetime.strptime(created_at[:19], '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            created_at = datetime.datetime.now(TH_TZ)
+
+    start_year = created_at.year
+    start_month = created_at.month
+    
+    target_month_index = start_month + (installment_no - 1) - 1
+    target_year = start_year + (target_month_index // 12)
+    target_month = (target_month_index % 12) + 1
+
+    last_day_of_month = calendar.monthrange(target_year, target_month)[1]
+    actual_day = min(due_day, last_day_of_month)
+
+    return datetime.date(target_year, target_month, actual_day)
 
 @app.route("/")
 def home():
@@ -262,65 +287,119 @@ def check_due_notifications():
                 continue
 
             due_day = c.get('due_day') or 5
-            
-            try:
-                due_date_this_month = datetime.date(today.year, today.month, due_day)
-            except ValueError:
-                import calendar
-                last_day = calendar.monthrange(today.year, today.month)[1]
-                due_date_this_month = datetime.date(today.year, today.month, last_day)
-
-            days_diff = (due_date_this_month - today).days
+            created_at = c.get('created_at')
 
             cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
             payments = cursor.fetchall()
 
-            paid_count = sum(1 for p in payments if p['status'] == 'paid')
-            next_installment_no = paid_count + 1
-
-            if next_installment_no > c['total_installments']:
+            unpaid_payments = [p for p in payments if p['status'] != 'paid']
+            if not unpaid_payments:
                 continue
 
-            installment_amount = float(c['installment_amount'])
+            current_p = unpaid_payments[0]
+            inst_no = current_p['installment_no']
+            due_date = get_installment_due_date(created_at, due_day, inst_no)
+            days_overdue = (today - due_date).days
+            days_until_due = (due_date - today).days
 
-            if days_diff == 3:
+            year_th = due_date.year + 543
+            month_th = THAI_MONTHS[due_date.month]
+            day_th = due_date.day
+
+            base_amount = float(c['installment_amount'])
+
+            if 0 <= days_until_due <= 3:
                 msg = (
-                    f"⏰ แจ้งเตือนค่างวดผ่อนชำระ (ล่วงหน้า 3 วัน)\n"
+                    f"⏰ แจ้งเตือนค่างวดผ่อนชำระ (ใกล้ถึงวันกำหนดชำระ)\n"
                     f"-------------------------------\n"
                     f"📦 สินค้า: {c['product_name']}\n"
-                    f"🔢 งวดที่: {next_installment_no}/{c['total_installments']}\n"
-                    f"💰 ยอดชำระ: {installment_amount:,.2f} บาท\n"
-                    f"📅 กำหนดชำระวันที่: {due_date_this_month.strftime('%d/%m/%Y')}\n\n"
-                    f"พิมพ์ 'เช็คยอด' เพื่อดูรายละเอียดหรือกดชำระเงินได้เลยครับ"
+                    f"🔢 งวดที่ต้องชำระ: งวดที่ {inst_no}/{c['total_installments']}\n"
+                    f"📅 กำหนดชำระ: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
+                    f"💰 ยอดชำระ: {base_amount:,.2f} บาท\n\n"
+                    f"กรุณาชำระเงินตามกำหนด ขอบคุณครับ"
                 )
-                send_line_push_notification(line_user_id, msg, next_installment_no, installment_amount)
+                send_line_push_notification(line_user_id, msg, inst_no, base_amount)
                 notified_count += 1
-            elif days_diff == 0:
+
+            elif 1 <= days_overdue <= 2:
                 msg = (
-                    f"🔔 แจ้งเตือนครบกำหนดชำระค่างวดวันนี้!\n"
+                    f"🔔 แจ้งเตือนระยะที่ 1: เลยกำหนดชำระ (อนุโลม 2 วัน)\n"
                     f"-------------------------------\n"
                     f"📦 สินค้า: {c['product_name']}\n"
-                    f"🔢 งวดที่: {next_installment_no}/{c['total_installments']}\n"
-                    f"💰 ยอดที่ต้องชำระ: {installment_amount:,.2f} บาท\n"
-                    f"📅 กำหนดชำระ: วันนี้ ({due_date_this_month.strftime('%d/%m/%Y')})\n\n"
-                    f"กรุณาชำระเงินภายในวันนี้เพื่อรักษาสิทธิ์ ขอบคุณครับ"
+                    f"🔢 งวดที่ต้องชำระ: งวดที่ {inst_no}/{c['total_installments']}\n"
+                    f"📅 กำหนดชำระเดิม: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
+                    f"💰 ยอดชำระ: {base_amount:,.2f} บาท (ไม่มีค่าปรับ)\n\n"
+                    f"ขณะนี้เลยกำหนดชำระมาแล้ว {days_overdue} วัน กรุณาดำเนินการชำระเพื่อป้องกันการเกิดค่าปรับครับ"
                 )
-                send_line_push_notification(line_user_id, msg, next_installment_no, installment_amount)
+                send_line_push_notification(line_user_id, msg, inst_no, base_amount)
                 notified_count += 1
-            elif days_diff < 0 and days_diff >= -5:
+
+            elif 3 <= days_overdue <= 7:
+                fine = days_overdue * 100
+                total_with_fine = base_amount + fine
                 msg = (
-                    f"⚠️ แจ้งเตือนเกินกำหนดชำระค่างวด ({abs(days_diff)} วัน)\n"
+                    f"⚠️ แจ้งเตือนระยะที่ 2: เลยกำหนดชำระ {days_overdue} วัน\n"
                     f"-------------------------------\n"
                     f"📦 สินค้า: {c['product_name']}\n"
-                    f"🔢 งวดที่ค้างชำระ: งวดที่ {next_installment_no}\n"
-                    f"💰 ยอดค้างชำระ: {installment_amount:,.2f} บาท\n\n"
-                    f"กรุณาดำเนินการชำระค่างวดโดยเร็วครับ"
+                    f"🔢 งวดที่ต้องชำระ: งวดที่ {inst_no}/{c['total_installments']}\n"
+                    f"📅 กำหนดชำระเดิม: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
+                    f"💰 ค่างวด: {base_amount:,.2f} บาท\n"
+                    f"💸 ค่าปรับ (100 บาท/วัน): {fine:,.2f} บาท\n"
+                    f"💵 ยอดรวมที่ต้องชำระ: {total_with_fine:,.2f} บาท\n\n"
+                    f"ขณะนี้อยู่ระหว่างค้างชำระ กรุณาชำระเงินโดยเร็วครับ"
                 )
-                send_line_push_notification(line_user_id, msg, next_installment_no, installment_amount)
+                send_line_push_notification(line_user_id, msg, inst_no, total_with_fine)
+                notified_count += 1
+
+            elif days_overdue > 7:
+                total_installments = c['total_installments']
+                
+                cursor.execute("""
+                    SELECT * FROM payments 
+                    WHERE contract_id = %s AND installment_no = %s AND status = 'overdue_shifted'
+                """, (c['id'], inst_no))
+                already_shifted = cursor.fetchone()
+
+                if not already_shifted:
+                    fine = days_overdue * 100
+                    cursor.execute("""
+                        UPDATE payments 
+                        SET status = 'overdue_shifted', amount = %s 
+                        WHERE id = %s
+                    """, (base_amount + fine, current_p['id']))
+
+                    cursor.execute("""
+                        INSERT INTO payments (contract_id, installment_no, amount, status)
+                        VALUES (%s, %s, %s, 'pending')
+                    """, (c['id'], total_installments + 1, base_amount + fine))
+
+                    cursor.execute("""
+                        UPDATE contracts 
+                        SET total_installments = total_installments + 1 
+                        WHERE id = %s
+                    """, (c['id'],))
+                    conn.commit()
+
+                cursor.execute("SELECT amount FROM payments WHERE id = %s", (current_p['id'],))
+                updated_p = cursor.fetchone()
+                fine_amount = float(updated_p['amount']) - base_amount
+                total_amount_shifted = float(updated_p['amount'])
+
+                msg = (
+                    f"🚨 แจ้งเตือนระยะที่ 3: เกินกำหนดชำระเกิน 7 วัน (สถานะ: ค้างชำระ)\n"
+                    f"-------------------------------\n"
+                    f"📦 สินค้า: {c['product_name']}\n"
+                    f"🔢 งวดที่ค้างชำระ: งวดที่ {inst_no}\n"
+                    f"📅 กำหนดชำระเดิม: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
+                    f"💸 ค่าปรับบวกเพิ่ม: {fine_amount:,.2f} บาท\n\n"
+                    f"ขณะนี้เลยกำหนดชำระแล้ว ระบบได้ข้ามเดือนที่ค้างชำระไปยังงวดถัดไป และนำงวดที่ค้างชำระพร้อมค่าปรับรวม {total_amount_shifted:,.2f} บาท ไปยกยอดเป็นงวดสุดท้ายเรียบร้อยแล้วครับ"
+                )
+                send_simple_push_notification(line_user_id, msg)
                 notified_count += 1
 
         return {"success": True, "notified_count": notified_count}
     except Exception as e:
+        conn.rollback()
         return {"success": False, "error": str(e)}
     finally:
         cursor.close()
@@ -541,6 +620,22 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
         
         created_at_str = str(contract['created_at'])[:10] if contract.get('created_at') else '-'
 
+        unpaid_list = [p for p in payments if p['status'] != 'paid']
+        next_p = unpaid_list[0] if unpaid_list else None
+
+        if next_p:
+            next_inst_no = next_p['installment_no']
+            due_date = get_installment_due_date(contract.get('created_at'), contract.get('due_day', 5), next_inst_no)
+            year_th = due_date.year + 543
+            month_th = THAI_MONTHS[due_date.month]
+            day_th = due_date.day
+            due_date_str = f"งวดที่ {next_inst_no} : วันที่ {day_th} {month_th} {year_th}"
+            pay_amount = float(next_p['amount']) if next_p.get('amount') else float(contract['installment_amount'])
+        else:
+            next_inst_no = paid_count
+            due_date_str = "ชำระครบถ้วนแล้ว"
+            pay_amount = float(contract['installment_amount'])
+
         footer_contents = []
         is_closed = contract['status'] in ['closed', 'closed_early'] or paid_count >= contract['total_installments']
         is_cancelled = contract['status'] == 'cancelled'
@@ -571,8 +666,8 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                     "color": "#1DB446",
                     "action": {
                         "type": "message",
-                        "label": f"จ่ายงวดที่ {paid_count + 1} ({float(contract['installment_amount']):,.2f} บ.)",
-                        "text": f"ชำระงวดที่ {paid_count + 1}"
+                        "label": f"จ่ายงวดที่ {next_inst_no} ({pay_amount:,.2f} บ.)",
+                        "text": f"ชำระงวดที่ {next_inst_no}"
                     }
                 })
                 footer_contents.append({
@@ -614,6 +709,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                         {"type": "text", "text": f"วันที่ทำสัญญา: {created_at_str}", "size": "sm"},
                         {"type": "text", "text": f"จำนวนเงินรวม: {float(contract['total_amount']):,.2f} บาท", "size": "sm"},
                         {"type": "text", "text": f"จำนวนงวดที่จ่าย: {paid_count} / {contract['total_installments']} งวด", "size": "sm"},
+                        {"type": "text", "text": f"กำหนดชำระถัดไป: {due_date_str}", "size": "sm", "weight": "bold", "color": "#e67e22"},
                         {"type": "text", "text": f"จำนวนเงินต่องวด: {float(contract['installment_amount']):,.2f} บาท", "size": "sm", "weight": "bold", "color": "#2c3e50"}
                     ]}
                 ]
@@ -647,7 +743,19 @@ def send_payment_qr(user_id, installment_no, reply_token):
             line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่"))
             return
 
-        amount = float(contract['installment_amount'])
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract['id'], installment_no))
+        p_row = cursor.fetchone()
+
+        if p_row and p_row.get('amount'):
+            amount = float(p_row['amount'])
+        else:
+            amount = float(contract['installment_amount'])
+
+        due_date = get_installment_due_date(contract.get('created_at'), contract.get('due_day', 5), installment_no)
+        year_th = due_date.year + 543
+        month_th = THAI_MONTHS[due_date.month]
+        day_th = due_date.day
+
         qr_url = f"{request.host_url.rstrip('/')}/qr-code/{PROMPTPAY_ID}/{amount:.2f}"
 
         msg_text = (
@@ -655,6 +763,7 @@ def send_payment_qr(user_id, installment_no, reply_token):
             f"-------------------------------\n"
             f"📦 สินค้า: {contract['product_name']}\n"
             f"🔢 งวดที่: {installment_no}\n"
+            f"📅 กำหนดชำระ: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
             f"💰 ยอดชำระ: {amount:,.2f} บาท\n\n"
             f"สแกน QR Code ด้านล่างเพื่อชำระเงินได้ทันทีครับ"
         )

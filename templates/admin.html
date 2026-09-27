@@ -462,6 +462,14 @@
             "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
         ];
 
+        function getDueDate(createdAtStr, dueDay, installmentNo) {
+            let createdDate = createdAtStr && createdAtStr !== '-' ? new Date(createdAtStr) : new Date();
+            let year = createdDate.getFullYear();
+            let month = createdDate.getMonth() + (installmentNo - 1);
+            let targetDate = new Date(year, month, dueDay);
+            return targetDate;
+        }
+
         async function loadContracts() {
             try {
                 const res = await fetch('/api/contracts');
@@ -526,18 +534,18 @@
                     }
 
                     if (isStatusActive && c.payments && Array.isArray(c.payments)) {
-                        let contractCreateDate = c.created_at && c.created_at !== '-' ? new Date(c.created_at) : new Date();
                         let unpays = [];
 
                         c.payments.forEach(p => {
                             if (p.status !== 'paid') {
-                                let targetDate = new Date(contractCreateDate.getFullYear(), contractCreateDate.getMonth() + p.installment_no, dueDay);
+                                let targetDate = getDueDate(c.created_at, dueDay, p.installment_no);
                                 
                                 if (targetDate <= now) {
                                     unpays.push({
                                         installment_no: p.installment_no,
                                         monthName: `${thaiMonths[targetDate.getMonth()]} ${targetDate.getFullYear() + 543}`,
-                                        targetDate: targetDate
+                                        targetDate: targetDate,
+                                        amount: p.amount ? Number(p.amount) : installmentAmount
                                     });
                                 }
                             }
@@ -545,6 +553,7 @@
 
                         if (unpays.length > 0) {
                             let monthNamesStr = unpays.map(u => u.monthName).join(', ');
+                            let totalDueSum = unpays.reduce((sum, item) => sum + item.amount, 0);
                             unpaidBillsList.push({
                                 contract_id: c.id,
                                 contract_number: c.contract_number,
@@ -555,7 +564,7 @@
                                 overdue_months: monthNamesStr,
                                 next_installment: unpays[0].installment_no,
                                 total_installments: totalInstallments,
-                                installment_amount: installmentAmount,
+                                installment_amount: totalDueSum,
                                 due_day: dueDay
                             });
                         }
@@ -674,7 +683,7 @@
                                 <span class="badge bg-danger">ค้างชำระ ${b.overdue_count} เดือน</span><br>
                                 <small class="text-muted">เดือน: ${b.overdue_months}</small>
                             </td>
-                            <td class="fw-bold text-danger">฿${(b.installment_amount * b.overdue_count).toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+                            <td class="fw-bold text-danger">฿${b.installment_amount.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
                             <td><i class="fa-regular fa-calendar me-1"></i>วันที่ ${b.due_day} ของทุกเดือน</td>
                             <td class="text-center">
                                 <button class="btn btn-sm btn-success" onclick="payInstallment(${b.contract_id})">
@@ -852,13 +861,12 @@
                                         <i class="fa-solid fa-file-invoice"></i> ดูบิล
                                     </a>
                                 </div>
-                            </li>
-                        `;
+                            </li>`;
                     });
                 }
                 if (historyModalObj) historyModalObj.show();
             } catch (err) {
-                alert("ไม่สามารถดึงประวัติการชำระเงินได้");
+                alert("ไม่สามารถดึงประวัติการชำระได้");
             }
         }
     </script>
