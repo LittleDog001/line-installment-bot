@@ -156,7 +156,7 @@ def create_contract():
 
         contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
 
-        # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา
+        # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา (รองรับการไม่ใส่ก่อนได้)
         evidence_filename = None
         evidence_file = request.files.get('evidence_file')
         if evidence_file and evidence_file.filename:
@@ -235,7 +235,7 @@ def process_contracts_api():
 
             contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
 
-            # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา (รองรับทั้ง Form-Data และ JSON)
+            # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา (รองรับทั้ง Form-Data และ JSON และเลือกไม่ใส่ก่อนได้)
             evidence_filename = None
             evidence_file = request.files.get('evidence_file') if request.files else None
             if evidence_file and evidence_file.filename:
@@ -329,12 +329,23 @@ def process_contract_detail_api(contract_id):
             return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
 
         if request.method in ['PUT', 'POST']:
-            data = request.get_json(silent=True) or request.form
+            data = request.form if request.form else (request.get_json(silent=True) or {})
             line_user_id = (data.get('line_user_id') or '').strip()
             customer_name = (data.get('customer_name') or '').strip()
             id_card = (data.get('id_card') or '').strip()
             phone = (data.get('phone') or '').strip()
             product_name = (data.get('product_name') or '').strip()
+
+            # รองรับระบบเพิ่มหรืออัปเดตหลักฐานการทำสัญญาไปทีหลัง
+            evidence_filename = contract.get('evidence_file')
+            evidence_file = request.files.get('evidence_file') if request.files else None
+            if evidence_file and evidence_file.filename:
+                filename = werkzeug.utils.secure_filename(evidence_file.filename)
+                timestamp_str = datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')
+                evidence_filename = f"ev_{timestamp_str}_{filename}"
+                upload_folder = os.path.join('static', 'uploads')
+                os.makedirs(upload_folder, exist_ok=True)
+                evidence_file.save(os.path.join(upload_folder, evidence_filename))
 
             changes = []
             if contract.get('customer_name') != customer_name:
@@ -345,12 +356,14 @@ def process_contract_detail_api(contract_id):
                 changes.append(f"- เลขบัตรประชาชน: {contract.get('id_card')} ➡️ {id_card}")
             if contract.get('product_name') != product_name:
                 changes.append(f"- รุ่นสินค้า: {contract.get('product_name')} ➡️ {product_name}")
+            if evidence_file and evidence_file.filename:
+                changes.append(f"- อัปเดต/เพิ่มหลักฐานการทำสัญญาแล้ว")
 
             cursor.execute("""
                 UPDATE contracts 
-                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s
+                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s, evidence_file = %s
                 WHERE id = %s
-            """, (line_user_id, customer_name, id_card, phone, product_name, contract_id))
+            """, (line_user_id, customer_name, id_card, phone, product_name, evidence_filename, contract_id))
 
             conn.commit()
 
@@ -359,7 +372,7 @@ def process_contract_detail_api(contract_id):
                 changes_text = "\n".join(changes)
                 send_push_contract_updated(target_line_user_id, contract.get('contract_number'), product_name, changes_text)
 
-            return jsonify({'message': 'แก้ไขสัญญาสำเร็จ', 'contract_id': contract_id})
+            return jsonify({'message': 'แก้ไขสัญญาและจัดการหลักฐานสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
             if contract.get('line_user_id'):

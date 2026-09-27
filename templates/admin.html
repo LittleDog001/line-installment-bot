@@ -162,10 +162,11 @@
                             <input type="text" id="product_name" class="form-control" placeholder="เช่น iPhone 15 Pro Max" required>
                         </div>
 
-                        <!-- เพิ่มระบบอัปโหลดหลักฐานการทำสัญญา (รูป/ไฟล์) -->
+                        <!-- เพิ่มระบบอัปโหลดหลักฐานการทำสัญญา (สามารถเลือกไม่ใส่ก่อนได้) -->
                         <div class="mb-2">
-                            <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>หลักฐานการทำสัญญา (รูปภาพ/PDF)</label>
+                            <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>หลักฐานการทำสัญญา (ไม่ใส่ก่อนได้)</label>
                             <input type="file" id="evidence_file" class="form-control" accept="image/*,.pdf">
+                            <div class="form-text text-muted small">สามารถข้ามการอัปโหลดไฟล์นี้ก่อนได้ และมาเพิ่มทีหลังได้จากปุ่มแก้ไขสัญญา</div>
                         </div>
 
                         <!-- รูปแบบการระบุราคาและจำนวนงวด -->
@@ -237,16 +238,16 @@
         </div>
     </div>
 
-    <!-- Modal: Edit Contract -->
+    <!-- Modal: Edit Contract & Add/Update Evidence -->
     <div class="modal fade" id="editModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content card-custom">
                 <div class="modal-header border-0 pb-0">
-                    <h5 class="fw-bold"><i class="fa-solid fa-pen-to-square text-primary me-2"></i>แก้ไขข้อมูลสัญญา</h5>
+                    <h5 class="fw-bold"><i class="fa-solid fa-pen-to-square text-primary me-2"></i>แก้ไขข้อมูลสัญญา / จัดการหลักฐาน</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <form id="editContractForm">
+                    <form id="editContractForm" enctype="multipart/form-data">
                         <input type="hidden" id="edit_id">
                         <div class="mb-2">
                             <label class="form-label small text-muted">ชื่อ-นามสกุล ลูกค้า</label>
@@ -264,6 +265,14 @@
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
                             <input type="text" id="edit_product_name" class="form-control" required>
                         </div>
+
+                        <!-- ระบบเพิ่มหรืออัปเดตหลักฐานการทำสัญญาไปทีหลัง -->
+                        <div class="mb-3">
+                            <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>เพิ่ม/เปลี่ยนหลักฐานการทำสัญญา (ทีหลัง)</label>
+                            <input type="file" id="edit_evidence_file" class="form-control" accept="image/*,.pdf">
+                            <div id="currentEvidenceInfo" class="form-text small mt-1"></div>
+                        </div>
+
                         <button type="submit" class="btn btn-success w-100 fw-bold mt-2"><i class="fa-solid fa-circle-check me-1"></i> บันทึกการแก้ไข</button>
                     </form>
                 </div>
@@ -539,7 +548,7 @@
                                 <a href="/contract/doc/${c.id}" target="_blank" class="btn btn-outline-dark" title="เปิดหนังสือสัญญา">
                                     <i class="fa-solid fa-file-contract"></i>
                                 </a>
-                                <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
+                                <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา/เพิ่มหลักฐาน"><i class="fa-solid fa-pen"></i></button>
                                 <button class="btn btn-outline-secondary" onclick="toggleStatus(${c.id}, '${c.status}')" title="เปลี่ยนสถานะ"><i class="fa-solid fa-power-off"></i></button>
                                 <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
                             </div>
@@ -550,12 +559,13 @@
                                 <a href="/contract/doc/${c.id}" target="_blank" class="btn btn-outline-dark" title="เปิดหนังสือสัญญา">
                                     <i class="fa-solid fa-file-contract"></i>
                                 </a>
+                                <button class="btn btn-outline-primary" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา/เพิ่มหลักฐาน"><i class="fa-solid fa-pen"></i></button>
                                 <button class="btn btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
                             </div>
                         `;
                     }
 
-                    let evidenceLinkHtml = evidenceFile ? `<br><a href="/static/uploads/${evidenceFile}" target="_blank" class="badge bg-info text-dark text-decoration-none mt-1"><i class="fa-solid fa-file-arrow-down me-1"></i>ดูหลักฐานสัญญา</a>` : `<br><small class="text-muted">ไม่มีไฟล์หลักฐาน</small>`;
+                    let evidenceLinkHtml = evidenceFile ? `<br><a href="/static/uploads/${evidenceFile}" target="_blank" class="badge bg-info text-dark text-decoration-none mt-1"><i class="fa-solid fa-file-arrow-down me-1"></i>ดูหลักฐานสัญญา</a>` : `<br><span class="badge bg-secondary text-white mt-1">ยังไม่มีหลักฐาน</span>`;
 
                     tr.innerHTML = `
                         <td>
@@ -692,6 +702,14 @@
                 document.getElementById('edit_phone').value = c.phone || '';
                 document.getElementById('edit_id_card').value = c.id_card || '';
                 document.getElementById('edit_product_name').value = c.product_name || '';
+                document.getElementById('edit_evidence_file').value = '';
+
+                const infoBox = document.getElementById('currentEvidenceInfo');
+                if (c.evidence_file) {
+                    infoBox.innerHTML = `ไฟล์หลักฐานปัจจุบัน: <a href="/static/uploads/${c.evidence_file}" target="_blank" class="text-primary">เปิดดูไฟล์เดิม</a> (หากเลือกไฟล์ใหม่ ระบบจะทำการเปลี่ยนแทนที่ไฟล์เดิม)`;
+                } else {
+                    infoBox.innerHTML = `<span class="text-warning">สัญญานี้ยังไม่มีไฟล์หลักฐาน สามารถอัปโหลดเพิ่มได้ที่นี่</span>`;
+                }
 
                 if (editModalObj) editModalObj.show();
             } catch (err) {
@@ -702,22 +720,25 @@
         document.getElementById('editContractForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const id = document.getElementById('edit_id').value;
-            const data = {
-                customer_name: document.getElementById('edit_customer_name').value,
-                phone: document.getElementById('edit_phone').value,
-                id_card: document.getElementById('edit_id_card').value,
-                product_name: document.getElementById('edit_product_name').value
-            };
+            const formData = new FormData();
+            formData.append('customer_name', document.getElementById('edit_customer_name').value);
+            formData.append('phone', document.getElementById('edit_phone').value);
+            formData.append('id_card', document.getElementById('edit_id_card').value);
+            formData.append('product_name', document.getElementById('edit_product_name').value);
+
+            const evidenceInput = document.getElementById('edit_evidence_file');
+            if (evidenceInput.files[0]) {
+                formData.append('evidence_file', evidenceInput.files[0]);
+            }
 
             const res = await fetch(`/api/contracts/${id}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: formData
             });
 
             if (res.ok) {
                 if (editModalObj) editModalObj.hide();
-                alert('อัปเดตข้อมูลสำเร็จ');
+                alert('อัปเดตข้อมูลและหลักฐานสำเร็จ');
                 loadContracts();
             } else {
                 const err = await res.json();

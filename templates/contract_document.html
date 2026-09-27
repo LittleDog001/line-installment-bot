@@ -12,6 +12,22 @@
         .contract-title { font-size: 22px; font-weight: bold; text-align: center; margin-bottom: 25px; }
         .text-indent { text-indent: 40px; }
         p { line-height: 1.8; font-size: 15px; margin-bottom: 12px; }
+        /* สไตล์กรอบสำหรับวางบัตรประชาชน */
+        .id-card-box {
+            width: 280px;
+            height: 175px;
+            border: 2px dashed #6c757d;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            background-color: #fdfdfd;
+            color: #6c757d;
+            margin: 20px auto;
+            padding: 10px;
+            font-size: 14px;
+        }
         @media print {
             body { background: #fff; }
             .contract-box { border: none; box-shadow: none; padding: 0; margin: 0; width: 100%; max-width: 100%; }
@@ -47,6 +63,14 @@
     <p class="text-indent">
         <strong>ข้อ 3. การผิดนัดชำระ:</strong> หากผู้เช่าซื้อผิดนัดไม่ชำระค่างวดติดต่อกันเกิน 2 งวด ผู้ให้เช่าซื้อมีสิทธิบอกเลิกสัญญา และติดตามยึดสินค้าคืนได้ทันที
     </p>
+
+    <!-- เพิ่มช่องว่างสำหรับวางบัตรประชาชนตามที่ท่านต้องการ -->
+    <div class="my-4 text-center">
+        <p class="mb-1 fw-bold">สำเนาบัตรประจำตัวประชาชนของผู้เช่าซื้อ</p>
+        <div class="id-card-box">
+            <span>[ พื้นสำหรับวางสำเนาบัตรประชาชน หรือแนบเอกสาร ]</span>
+        </div>
+    </div>
 
     <p class="text-indent">
         สัญญาฉบับนี้ทำขึ้นสองฉบับมีข้อความถูกต้องตรงกัน คู่สัญญาได้อ่านและเข้าใจข้อความโดยละเอียดตลอดแล้ว จึงได้ลงลายมือชื่อไว้เป็นหลักฐานต่อหน้าพยาน
