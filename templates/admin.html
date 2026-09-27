@@ -162,6 +162,28 @@
                             <input type="text" id="product_name" class="form-control" placeholder="เช่น iPhone 15 Pro Max" required>
                         </div>
 
+                        <!-- เพิ่มช่องกรอก IMEI, Serial Number, สี, ความจุหน่วยความจำ -->
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label small text-muted">หมายเลขเครื่อง (IMEI)</label>
+                                <input type="text" id="imei" class="form-control" placeholder="IMEI 15 หลัก">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">หมายเลขซีเรียล (Serial No.)</label>
+                                <input type="text" id="serial_number" class="form-control" placeholder="Serial Number">
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label small text-muted">สี</label>
+                                <input type="text" id="color" class="form-control" placeholder="เช่น สีดำ / Space Black">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">ความจุหน่วยความจำ (Capacity)</label>
+                                <input type="text" id="capacity" class="form-control" placeholder="เช่น 256GB">
+                            </div>
+                        </div>
+
                         <!-- เพิ่มระบบอัปโหลดหลักฐานการทำสัญญา (สามารถเลือกไม่ใส่ก่อนได้) -->
                         <div class="mb-2">
                             <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>หลักฐานการทำสัญญา (ไม่ใส่ก่อนได้)</label>
@@ -220,7 +242,7 @@
                             <thead class="table-light">
                                 <tr class="small text-muted">
                                     <th>สัญญา/ลูกค้า</th>
-                                    <th>สินค้า/หลักฐาน</th>
+                                    <th>สินค้า/รายละเอียดเครื่อง/หลักฐาน</th>
                                     <th>งวดชำระ/กำหนด</th>
                                     <th>วันที่ทำสัญญา</th>
                                     <th>สถานะ</th>
@@ -266,7 +288,28 @@
                             <input type="text" id="edit_product_name" class="form-control" required>
                         </div>
 
-                        <!-- ระบบเพิ่มหรืออัปเดตหลักฐานการทำสัญญาไปทีหลัง -->
+                        <!-- แก้ไข IMEI, Serial, สี, ความจุ -->
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label small text-muted">หมายเลขเครื่อง (IMEI)</label>
+                                <input type="text" id="edit_imei" class="form-control">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">หมายเลขซีเรียล (Serial No.)</label>
+                                <input type="text" id="edit_serial_number" class="form-control">
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label small text-muted">สี</label>
+                                <input type="text" id="edit_color" class="form-control">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">ความจุหน่วยความจำ (Capacity)</label>
+                                <input type="text" id="edit_capacity" class="form-control">
+                            </div>
+                        </div>
+
                         <div class="mb-3">
                             <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>เพิ่ม/เปลี่ยนหลักฐานการทำสัญญา (ทีหลัง)</label>
                             <input type="file" id="edit_evidence_file" class="form-control" accept="image/*,.pdf">
@@ -297,7 +340,6 @@
         </div>
     </div>
 
-    <!-- CSS Grid Hack for 5 Stat Cards -->
     <style>
         @media (min-width: 768px) {
             .col-md-2-4 {
@@ -386,6 +428,10 @@
             formData.append('phone', document.getElementById('phone').value);
             formData.append('id_card', document.getElementById('id_card').value);
             formData.append('product_name', document.getElementById('product_name').value);
+            formData.append('imei', document.getElementById('imei').value);
+            formData.append('serial_number', document.getElementById('serial_number').value);
+            formData.append('color', document.getElementById('color').value);
+            formData.append('capacity', document.getElementById('capacity').value);
             formData.append('total_amount', document.getElementById('total_amount').value);
             formData.append('total_installments', document.getElementById('total_installments').value);
             formData.append('installment_amount', document.getElementById('installment_amount').value);
@@ -450,6 +496,9 @@
                     const totalAmount = Number(c.total_amount || 0);
                     const phone = c.phone || '';
                     const productName = c.product_name || '';
+                    const imei = c.imei ? `IMEI: ${c.imei}` : '';
+                    const serialNumber = c.serial_number ? `S/N: ${c.serial_number}` : '';
+                    const colorCap = (c.color || c.capacity) ? `สี: ${c.color || '-'} | ความจุ: ${c.capacity || '-'}` : '';
                     const idCard = c.id_card ? ` (ปชช: ${c.id_card})` : '';
                     const dueDay = c.due_day || 5;
                     const createdAtFormatted = c.created_at_formatted || '-';
@@ -575,6 +624,8 @@
                         </td>
                         <td>
                             <span class="fw-semibold">${productName}</span><br>
+                            <small class="text-muted">${imei} ${serialNumber}</small><br>
+                            <small class="text-muted">${colorCap}</small><br>
                             <small class="text-muted">฿${installmentAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})}/งวด (รวม ฿${totalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})})</small>
                             ${evidenceLinkHtml}
                         </td>
@@ -702,6 +753,10 @@
                 document.getElementById('edit_phone').value = c.phone || '';
                 document.getElementById('edit_id_card').value = c.id_card || '';
                 document.getElementById('edit_product_name').value = c.product_name || '';
+                document.getElementById('edit_imei').value = c.imei || '';
+                document.getElementById('edit_serial_number').value = c.serial_number || '';
+                document.getElementById('edit_color').value = c.color || '';
+                document.getElementById('edit_capacity').value = c.capacity || '';
                 document.getElementById('edit_evidence_file').value = '';
 
                 const infoBox = document.getElementById('currentEvidenceInfo');
@@ -725,6 +780,10 @@
             formData.append('phone', document.getElementById('edit_phone').value);
             formData.append('id_card', document.getElementById('edit_id_card').value);
             formData.append('product_name', document.getElementById('edit_product_name').value);
+            formData.append('imei', document.getElementById('edit_imei').value);
+            formData.append('serial_number', document.getElementById('edit_serial_number').value);
+            formData.append('color', document.getElementById('edit_color').value);
+            formData.append('capacity', document.getElementById('edit_capacity').value);
 
             const evidenceInput = document.getElementById('edit_evidence_file');
             if (evidenceInput.files[0]) {

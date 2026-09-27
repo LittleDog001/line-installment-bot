@@ -134,6 +134,10 @@ def create_contract():
         id_card = (request.form.get('id_card') or '').strip()
         phone = (request.form.get('phone') or '').strip()
         product_name = (request.form.get('product_name') or '').strip()
+        imei = (request.form.get('imei') or '').strip()
+        serial_number = (request.form.get('serial_number') or '').strip()
+        color = (request.form.get('color') or '').strip()
+        capacity = (request.form.get('capacity') or '').strip()
         
         raw_total = request.form.get('total_amount', 0)
         raw_installments = request.form.get('total_installments', 0)
@@ -154,9 +158,8 @@ def create_contract():
         if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
             return "กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง", 400
 
-        contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
+        contract_number = f"C{now_time.strftime('%y%m%d%H%M%S')}"
 
-        # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา (รองรับการไม่ใส่ก่อนได้)
         evidence_filename = None
         evidence_file = request.files.get('evidence_file')
         if evidence_file and evidence_file.filename:
@@ -170,13 +173,13 @@ def create_contract():
         cursor.execute("""
             INSERT INTO contracts (
                 contract_number, line_user_id, customer_name, id_card, phone, 
-                product_name, total_amount, total_installments, installment_amount, due_day, status, evidence_file
+                product_name, imei, serial_number, color, capacity, total_amount, total_installments, installment_amount, due_day, status, evidence_file
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
             RETURNING id
         """, (
             contract_number, line_user_id, customer_name, id_card, phone, 
-            product_name, total_amount, total_installments, installment_amount, due_day, evidence_filename
+            product_name, imei, serial_number, color, capacity, total_amount, total_installments, installment_amount, due_day, evidence_filename
         ))
         
         contract_row = cursor.fetchone()
@@ -213,6 +216,10 @@ def process_contracts_api():
             id_card = (data.get('id_card') or '').strip()
             phone = (data.get('phone') or '').strip()
             product_name = (data.get('product_name') or '').strip()
+            imei = (data.get('imei') or '').strip()
+            serial_number = (data.get('serial_number') or '').strip()
+            color = (data.get('color') or '').strip()
+            capacity = (data.get('capacity') or '').strip()
             
             raw_total = data.get('total_amount', 0)
             raw_installments = data.get('total_installments', 0)
@@ -233,9 +240,8 @@ def process_contracts_api():
             if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
                 return jsonify({'error': 'กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง'}), 400
 
-            contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
+            contract_number = f"C{now_time.strftime('%y%m%d%H%M%S')}"
 
-            # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา (รองรับทั้ง Form-Data และ JSON และเลือกไม่ใส่ก่อนได้)
             evidence_filename = None
             evidence_file = request.files.get('evidence_file') if request.files else None
             if evidence_file and evidence_file.filename:
@@ -249,13 +255,13 @@ def process_contracts_api():
             cursor.execute("""
                 INSERT INTO contracts (
                     contract_number, line_user_id, customer_name, id_card, phone, 
-                    product_name, total_amount, total_installments, installment_amount, due_day, status, evidence_file
+                    product_name, imei, serial_number, color, capacity, total_amount, total_installments, installment_amount, due_day, status, evidence_file
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
                 RETURNING id
             """, (
                 contract_number, line_user_id, customer_name, id_card, phone, 
-                product_name, total_amount, total_installments, installment_amount, due_day, evidence_filename
+                product_name, imei, serial_number, color, capacity, total_amount, total_installments, installment_amount, due_day, evidence_filename
             ))
             
             contract_row = cursor.fetchone()
@@ -335,8 +341,11 @@ def process_contract_detail_api(contract_id):
             id_card = (data.get('id_card') or '').strip()
             phone = (data.get('phone') or '').strip()
             product_name = (data.get('product_name') or '').strip()
+            imei = (data.get('imei') or '').strip()
+            serial_number = (data.get('serial_number') or '').strip()
+            color = (data.get('color') or '').strip()
+            capacity = (data.get('capacity') or '').strip()
 
-            # รองรับระบบเพิ่มหรืออัปเดตหลักฐานการทำสัญญาไปทีหลัง
             evidence_filename = contract.get('evidence_file')
             evidence_file = request.files.get('evidence_file') if request.files else None
             if evidence_file and evidence_file.filename:
@@ -356,14 +365,22 @@ def process_contract_detail_api(contract_id):
                 changes.append(f"- เลขบัตรประชาชน: {contract.get('id_card')} ➡️ {id_card}")
             if contract.get('product_name') != product_name:
                 changes.append(f"- รุ่นสินค้า: {contract.get('product_name')} ➡️ {product_name}")
+            if contract.get('imei') != imei:
+                changes.append(f"- IMEI: {contract.get('imei')} ➡️ {imei}")
+            if contract.get('serial_number') != serial_number:
+                changes.append(f"- Serial Number: {contract.get('serial_number')} ➡️ {serial_number}")
+            if contract.get('color') != color:
+                changes.append(f"- สี: {contract.get('color')} ➡️ {color}")
+            if contract.get('capacity') != capacity:
+                changes.append(f"- ความจุ: {contract.get('capacity')} ➡️ {capacity}")
             if evidence_file and evidence_file.filename:
                 changes.append(f"- อัปเดต/เพิ่มหลักฐานการทำสัญญาแล้ว")
 
             cursor.execute("""
                 UPDATE contracts 
-                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s, evidence_file = %s
+                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s, imei = %s, serial_number = %s, color = %s, capacity = %s, evidence_file = %s
                 WHERE id = %s
-            """, (line_user_id, customer_name, id_card, phone, product_name, evidence_filename, contract_id))
+            """, (line_user_id, customer_name, id_card, phone, product_name, imei, serial_number, color, capacity, evidence_filename, contract_id))
 
             conn.commit()
 

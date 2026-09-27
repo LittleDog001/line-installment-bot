@@ -55,6 +55,10 @@ def init_db():
             id_card VARCHAR(50),
             phone VARCHAR(50),
             product_name VARCHAR(255),
+            imei VARCHAR(100),
+            serial_number VARCHAR(100),
+            color VARCHAR(50),
+            capacity VARCHAR(50),
             total_amount NUMERIC(12, 2),
             total_installments INTEGER,
             installment_amount NUMERIC(12, 2),
@@ -64,12 +68,12 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     ''')
-    cursor.execute('''
-        ALTER TABLE contracts ADD COLUMN IF NOT EXISTS due_day INTEGER DEFAULT 5;
-    ''')
-    cursor.execute('''
-        ALTER TABLE contracts ADD COLUMN IF NOT EXISTS evidence_file TEXT;
-    ''')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS due_day INTEGER DEFAULT 5;')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS evidence_file TEXT;')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS imei VARCHAR(100);')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS serial_number VARCHAR(100);')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS color VARCHAR(50);')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS capacity VARCHAR(50);')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
@@ -603,6 +607,10 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                         {"type": "text", "text": f"ชื่อ-สกุลลูกค้า: {contract['customer_name']}", "size": "sm"},
                         {"type": "text", "text": f"เลขบัตรปชช: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
                         {"type": "text", "text": f"เบอร์โทรลูกค้า: {contract['phone'] if contract['phone'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"รุ่นสินค้า: {contract['product_name']}", "size": "sm"},
+                        {"type": "text", "text": f"IMEI: {contract['imei'] if contract['imei'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"Serial No: {contract['serial_number'] if contract['serial_number'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"สี/ความจุ: {contract['color'] if contract['color'] else '-'} / {contract['capacity'] if contract['capacity'] else '-'}", "size": "sm"},
                         {"type": "text", "text": f"วันที่ทำสัญญา: {created_at_str}", "size": "sm"},
                         {"type": "text", "text": f"จำนวนเงินรวม: {float(contract['total_amount']):,.2f} บาท", "size": "sm"},
                         {"type": "text", "text": f"จำนวนงวดที่จ่าย: {paid_count} / {contract['total_installments']} งวด", "size": "sm"},

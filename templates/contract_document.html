@@ -59,7 +59,11 @@
     </p>
 
     <p class="text-indent">
-        <strong>ข้อ 1. สินค้าเช่าซื้อ:</strong> ผู้ให้เช่าซื้อตกลงให้เช่าซื้อ และผู้เช่าซื้อตกลงเช่าซื้อโทรศัพท์มือถือ/สินค้า รุ่น <strong>{{ c.product_name }}</strong>
+        <strong>ข้อ 1. สินค้าเช่าซื้อ:</strong> ผู้ให้เช่าซื้อตกลงให้เช่าซื้อ และผู้เช่าซื้อตกลงเช่าซื้อโทรศัพท์มือถือ/สินค้า <strong>{{ c.product_name }}</strong> 
+        หมายเลขเครื่อง (IMEI): <strong>{{ c.imei if c.imei else '-' }}</strong>, 
+        หมายเลขซีเรียล (Serial No.): <strong>{{ c.serial_number if c.serial_number else '-' }}</strong>, 
+        สี: <strong>{{ c.color if c.color else '-' }}</strong>, 
+        ความจุ: <strong>{{ c.capacity if c.capacity else '-' }}</strong>
     </p>
 
     <p class="text-indent">
