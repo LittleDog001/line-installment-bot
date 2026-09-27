@@ -28,12 +28,10 @@ def send_push_thank_you(user_id, contract_number, product_name):
     except Exception as e:
         print(f"Error sending thank you message to {user_id}: {e}")
 
-# เพิ่มระบบ: ส่งแจ้งเตือนไปยังลูกค้าเมื่อสัญญาโดนยกเลิกหรือลบ (พร้อมเงื่อนไขป้องกัน หากปิดยอด/จ่ายครบแล้ว จะไม่มีการแจ้งเตือนว่ายกเลิก)
 def send_push_cancellation(user_id, contract_number, product_name, contract_status="active"):
     if not user_id:
         return
     
-    # เงื่อนไขป้องกัน: หากสถานะสัญญาเป็น closed หรือ closed_early (จ่ายครบหรือปิดยอดไปแล้ว) จะไม่มีการส่งแจ้งเตือนยกเลิก
     if contract_status in ['closed', 'closed_early']:
         print(f"Contract {contract_number} is already closed/completed. Skipping cancellation notification.")
         return
@@ -50,7 +48,6 @@ def send_push_cancellation(user_id, contract_number, product_name, contract_stat
     except Exception as e:
         print(f"Error sending cancellation message to {user_id}: {e}")
 
-# เพิ่มระบบ: แจ้งเตือนลูกค้าผ่าน LINE เมื่อหลังบ้านกดแก้ไขสัญญา พร้อมระบุรายละเอียดสิ่งที่แก้ไข
 def send_push_contract_updated(user_id, contract_number, product_name, updated_fields_text):
     if not user_id:
         return
@@ -140,10 +137,12 @@ def create_contract():
         raw_total = request.form.get('total_amount', 0)
         raw_installments = request.form.get('total_installments', 0)
         raw_installment_amount = request.form.get('installment_amount', 0)
-        raw_due_day = request.form.get('due_day', 5)
 
         total_installments = int(raw_installments) if raw_installments else 0
-        due_day = int(raw_due_day) if raw_due_day else 5
+        
+        # ใช้เป็นวันที่ทำสัญญาเป็นวันที่ชำระในแต่ละเดือนอัตโนมัติ
+        now_time = datetime.datetime.now(TH_TZ)
+        due_day = now_time.day
 
         if raw_installment_amount and float(raw_installment_amount) > 0:
             installment_amount = float(raw_installment_amount)
@@ -155,7 +154,7 @@ def create_contract():
         if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
             return "กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง", 400
 
-        contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
+        contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
 
         cursor.execute("""
             INSERT INTO contracts (
@@ -207,10 +206,11 @@ def process_contracts_api():
             raw_total = data.get('total_amount', 0)
             raw_installments = data.get('total_installments', 0)
             raw_installment_amount = data.get('installment_amount', 0)
-            raw_due_day = data.get('due_day', 5)
 
             total_installments = int(raw_installments) if raw_installments else 0
-            due_day = int(raw_due_day) if raw_due_day else 5
+            
+            now_time = datetime.datetime.now(TH_TZ)
+            due_day = now_time.day
 
             if raw_installment_amount and float(raw_installment_amount) > 0:
                 installment_amount = float(raw_installment_amount)
@@ -222,7 +222,7 @@ def process_contracts_api():
             if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
                 return jsonify({'error': 'กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง'}), 400
 
-            contract_number = f"CTR-{datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')}"
+            contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
 
             cursor.execute("""
                 INSERT INTO contracts (
@@ -313,9 +313,7 @@ def process_contract_detail_api(contract_id):
             id_card = (data.get('id_card') or '').strip()
             phone = (data.get('phone') or '').strip()
             product_name = (data.get('product_name') or '').strip()
-            due_day = int(data.get('due_day', 5))
 
-            # ตรวจสอบฟิลด์ที่มีการเปลี่ยนแปลง เพื่อนำไปแจ้งเตือนลูกค้า
             changes = []
             if contract.get('customer_name') != customer_name:
                 changes.append(f"- ชื่อ-นามสกุล: {contract.get('customer_name')} ➡️ {customer_name}")
@@ -325,18 +323,15 @@ def process_contract_detail_api(contract_id):
                 changes.append(f"- เลขบัตรประชาชน: {contract.get('id_card')} ➡️ {id_card}")
             if contract.get('product_name') != product_name:
                 changes.append(f"- รุ่นสินค้า: {contract.get('product_name')} ➡️ {product_name}")
-            if contract.get('due_day') != due_day:
-                changes.append(f"- วันชำระประจำเดือน: ทุกวันที่ {contract.get('due_day')} ➡️ ทุกวันที่ {due_day}")
 
             cursor.execute("""
                 UPDATE contracts 
-                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s, due_day = %s
+                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s
                 WHERE id = %s
-            """, (line_user_id, customer_name, id_card, phone, product_name, due_day, contract_id))
+            """, (line_user_id, customer_name, id_card, phone, product_name, contract_id))
 
             conn.commit()
 
-            # ส่งแจ้งเตือนทาง LINE หากมีการแก้ไขข้อมูลและมีระบุ line_user_id ไว้
             target_line_user_id = line_user_id if line_user_id else contract.get('line_user_id')
             if target_line_user_id and changes:
                 changes_text = "\n".join(changes)
@@ -345,7 +340,6 @@ def process_contract_detail_api(contract_id):
             return jsonify({'message': 'แก้ไขสัญญาสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
-            # ดึงข้อมูลมาส่งแจ้งเตือนลูกค้าก่อนลบสัญญาออกจากระบบ (พร้อมเงื่อนไขป้องกันหากปิดยอดไปแล้วจะไม่แจ้งเตือน)
             if contract.get('line_user_id'):
                 send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'), contract.get('status'))
 
@@ -549,7 +543,6 @@ def update_contract_status_api(contract_id):
         cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (status, contract_id))
         conn.commit()
 
-        # เพิ่มระบบ: หากเปลี่ยนสถานะเป็น cancelled ให้ส่ง LINE แจ้งเตือนลูกค้าทันที (พร้อมเงื่อนไขป้องกัน หากปิดยอดไปแล้วจะไม่แจ้งเตือนซ้ำซ้อน)
         if status.lower() == 'cancelled':
             cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
             contract = cursor.fetchone()

@@ -147,7 +147,6 @@ def root_api_update_contract_status(contract_id):
         cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (new_status, contract_id))
         conn.commit()
 
-        # เพิ่มระบบ: แจ้งเตือนไปยังลูกค้าผ่าน LINE เมื่อเปลี่ยนสถานะเป็น cancelled
         if new_status.lower() == 'cancelled':
             cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
             contract = cursor.fetchone()
@@ -505,13 +504,12 @@ def render_flex_contract(contract, reply_token):
         payments = cursor.fetchall()
 
         paid_count = sum(1 for p in payments if p['status'] == 'paid')
-        remaining_count = contract['total_installments'] - paid_count
-        remaining_balance = float(remaining_count * contract['installment_amount'])
-        discounted_close_amount = remaining_balance * 0.85 if remaining_balance > 0 else 0
-        due_day = contract.get('due_day') or 5
+        
+        # จัดรูปแบบวันที่ทำสัญญา
+        created_at_str = str(contract['created_at'])[:10] if contract.get('created_at') else '-'
 
         footer_contents = []
-        is_closed = contract['status'] in ['closed', 'closed_early'] or remaining_count == 0
+        is_closed = contract['status'] in ['closed', 'closed_early'] or paid_count >= contract['total_installments']
         is_cancelled = contract['status'] == 'cancelled'
 
         if is_cancelled:
@@ -552,32 +550,25 @@ def render_flex_contract(contract, reply_token):
                 "weight": "bold"
             })
 
-        status_display = "🟢 กำลังผ่อนชำระ"
-        if is_cancelled:
-            status_display = "❌ ยกเลิกสัญญาแล้ว"
-        elif is_closed:
-            status_display = "🔒 ปิดยอดแล้ว"
-
+        # แสดงเฉพาะข้อมูลที่ระบุตามกฎข้อ 1:
+        # เลขที่สัญญา, ชื่อสกุลลูกค้า, เลขบัตรปชช, เบอร์โทรลูกค้า, วันที่ทำสัญญา, จำนวนเงินรวม, จำนวนงวดที่จ่าย, จำนวนเงินที่จ่ายในแต่ละงวด
         flex_contents = {
             "type": "bubble",
             "body": {
                 "type": "box",
                 "layout": "vertical",
                 "contents": [
-                    {"type": "text", "text": "รายการผ่อนชำระของคุณ", "weight": "bold", "size": "xl", "color": "#1DB446"},
-                    {"type": "text", "text": f"สินค้า: {contract['product_name']}", "size": "md", "margin": "md", "weight": "bold"},
+                    {"type": "text", "text": "ข้อมูลสัญญาผ่อนชำระ", "weight": "bold", "size": "xl", "color": "#1DB446"},
                     {"type": "separator", "margin": "md"},
                     {"type": "box", "layout": "vertical", "margin": "md", "spacing": "sm", "contents": [
-                        {"type": "text", "text": f"ผู้กู้/ผู้ผ่อน: {contract['customer_name']}", "size": "sm"},
-                        {"type": "text", "text": f"เลขบัตรประชาชน: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
-                        {"type": "text", "text": f"เบอร์โทรศัพท์: {contract['phone'] if contract['phone'] else '-'}", "size": "sm"},
-                        {"type": "text", "text": f"ค่างวด: {float(contract['installment_amount']):,.2f} บาท/งวด", "size": "sm", "weight": "bold", "color": "#2c3e50"},
-                        {"type": "text", "text": f"งวดทั้งหมด: {contract['total_installments']} งวด", "size": "sm"},
-                        {"type": "text", "text": f"📅 กำหนดชำระทุกวันที่: {due_day} ของเดือน", "size": "sm", "color": "#2980b9", "weight": "bold"},
-                        {"type": "text", "text": f"ชำระแล้ว: {paid_count} งวด", "size": "sm", "color": "#27ae60"},
-                        {"type": "text", "text": f"คงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)", "size": "sm", "color": "#e74c3c"},
-                        {"type": "text", "text": f"สถานะ: {status_display}", "size": "sm", "weight": "bold", "color": "#e74c3c" if is_cancelled else ("#27ae60" if is_closed else "#1DB446")},
-                        {"type": "text", "text": f"🔥 ยอดปิดบัญชีทันที (ลด 15%): {discounted_close_amount:,.2f} บาท", "size": "sm", "weight": "bold", "color": "#d35400"}
+                        {"type": "text", "text": f"เลขที่สัญญา: {contract['contract_number']}", "size": "sm", "weight": "bold", "color": "#0d6efd"},
+                        {"type": "text", "text": f"ชื่อ-สกุลลูกค้า: {contract['customer_name']}", "size": "sm"},
+                        {"type": "text", "text": f"เลขบัตรปชช: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"เบอร์โทรลูกค้า: {contract['phone'] if contract['phone'] else '-'}", "size": "sm"},
+                        {"type": "text", "text": f"วันที่ทำสัญญา: {created_at_str}", "size": "sm"},
+                        {"type": "text", "text": f"จำนวนเงินรวม: {float(contract['total_amount']):,.2f} บาท", "size": "sm"},
+                        {"type": "text", "text": f"จำนวนงวดที่จ่าย: {paid_count} / {contract['total_installments']} งวด", "size": "sm"},
+                        {"type": "text", "text": f"จำนวนเงินต่องวด: {float(contract['installment_amount']):,.2f} บาท", "size": "sm", "weight": "bold", "color": "#2c3e50"}
                     ]}
                 ]
             },
@@ -589,7 +580,7 @@ def render_flex_contract(contract, reply_token):
             }
         }
 
-        line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text="สถานะสัญญาชำระเงิน", contents=flex_contents))
+        line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text="ข้อมูลสัญญา", contents=flex_contents))
     finally:
         cursor.close()
         conn.close()

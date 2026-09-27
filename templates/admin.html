@@ -107,13 +107,13 @@
             </div>
         </div>
 
-        <!-- Section: Unpaid Monthly Bills -->
+        <!-- Section: Unpaid & Overdue Monthly Bills -->
         <div class="row g-4 mb-4">
             <div class="col-12">
                 <div class="card card-custom p-4 bg-white border-start border-danger border-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="fw-bold text-danger mb-0">
-                            <i class="fa-solid fa-triangle-exclamation me-2"></i>รายการบิลที่ยังไม่ได้ชำระประจำเดือนนี้
+                            <i class="fa-solid fa-triangle-exclamation me-2"></i>รายการบิลที่ค้างชำระ / ยังไม่ได้ชำระ
                         </h5>
                         <span class="badge bg-danger rounded-pill" id="unpaidBillsBadge">0 รายการ</span>
                     </div>
@@ -124,6 +124,7 @@
                                     <th>สัญญา/ลูกค้า</th>
                                     <th>สินค้า</th>
                                     <th>งวดที่ค้าง</th>
+                                    <th>สถานะการค้างชำระ</th>
                                     <th>ยอดที่ต้องชำระ</th>
                                     <th>กำหนดชำระ</th>
                                     <th class="text-center">ดำเนินการ</th>
@@ -186,11 +187,7 @@
                             <input type="number" step="0.01" id="installment_amount" class="form-control" placeholder="3750" oninput="autoCalcTotal()">
                         </div>
 
-                        <div class="mb-2">
-                            <label class="form-label small text-muted"><i class="fa-regular fa-calendar-days text-primary me-1"></i>วันชำระประจำเดือน (กำหนดใช้วันเดียวกันนี้ทุกงวด)</label>
-                            <input type="number" min="1" max="31" id="due_day" class="form-control" placeholder="5" value="5" required>
-                        </div>
-                        <button type="submit" class="btn btn-primary w-100 fw-bold mt-2"><i class="fa-solid fa-save me-1"></i> บันทึกสัญญา</button>
+                        <button type="submit" class="btn btn-primary w-100 fw-bold mt-3"><i class="fa-solid fa-save me-1"></i> บันทึกสัญญา</button>
                     </form>
                 </div>
             </div>
@@ -261,11 +258,7 @@
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
                             <input type="text" id="edit_product_name" class="form-control" required>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label small text-muted"><i class="fa-regular fa-calendar-days text-primary me-1"></i>วันชำระประจำเดือน (ใช้วันเดียวกันทุกงวด)</label>
-                            <input type="number" min="1" max="31" id="edit_due_day" class="form-control" required>
-                        </div>
-                        <button type="submit" class="btn btn-success w-100 fw-bold"><i class="fa-solid fa-circle-check me-1"></i> บันทึกการแก้ไข</button>
+                        <button type="submit" class="btn btn-success w-100 fw-bold mt-2"><i class="fa-solid fa-circle-check me-1"></i> บันทึกการแก้ไข</button>
                     </form>
                 </div>
             </div>
@@ -380,8 +373,7 @@
                 product_name: document.getElementById('product_name').value,
                 total_amount: document.getElementById('total_amount').value,
                 total_installments: document.getElementById('total_installments').value,
-                installment_amount: document.getElementById('installment_amount').value,
-                due_day: document.getElementById('due_day').value
+                installment_amount: document.getElementById('installment_amount').value
             };
 
             const res = await fetch('/api/contracts', {
@@ -393,7 +385,6 @@
             if (res.ok) {
                 alert('เพิ่มสัญญาสำเร็จ');
                 document.getElementById('addContractForm').reset();
-                document.getElementById('due_day').value = 5;
                 toggleCalcType();
                 loadContracts();
             } else {
@@ -401,6 +392,11 @@
                 alert('เกิดข้อผิดพลาด: ' + (err.error || err.message || 'ไม่สามารถเพิ่มสัญญาได้'));
             }
         });
+
+        const thaiMonths = [
+            "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+            "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+        ];
 
         async function loadContracts() {
             try {
@@ -442,7 +438,7 @@
 
                     totalPaid += (paidCount * installmentAmount);
 
-                    // คำนวณสถานะบิลประจำเดือนนี้
+                    // คำนวณบิลประจำเดือนนี้
                     if (isStatusActive) {
                         dueThisMonthCount++;
                         
@@ -459,14 +455,41 @@
 
                         if (hasPaidThisMonth) {
                             paidThisMonthCount++;
-                        } else {
+                        }
+                    }
+
+                    // คำนวณรายการค้างชำระ: ตรวจสอบทุกงวดที่เลยกำหนดและยังไม่จ่าย (ว่างวดแรกเริ่มเดือนถัดไปจากเดือนทำสัญญา)
+                    if (isStatusActive && c.payments && Array.isArray(c.payments)) {
+                        let contractCreateDate = c.created_at && c.created_at !== '-' ? new Date(c.created_at) : new Date();
+                        let unpays = [];
+
+                        c.payments.forEach(p => {
+                            if (p.status !== 'paid') {
+                                // งวดที่ i เริ่มต้นเดือนถัดไป (i=1 คือเดือนถัดจากสร้างสัญญา)
+                                let targetDate = new Date(contractCreateDate.getFullYear(), contractCreateDate.getMonth() + p.installment_no, dueDay);
+                                
+                                // เช็คว่าถึงกำหนดหรือเลยกำหนดแล้วหรือยัง (เทียบกับวันปัจจุบัน)
+                                if (targetDate <= now) {
+                                    unpays.push({
+                                        installment_no: p.installment_no,
+                                        monthName: `${thaiMonths[targetDate.getMonth()]} ${targetDate.getFullYear() + 543}`,
+                                        targetDate: targetDate
+                                    });
+                                }
+                            }
+                        });
+
+                        if (unpays.length > 0) {
+                            let monthNamesStr = unpays.map(u => u.monthName).join(', ');
                             unpaidBillsList.push({
                                 contract_id: c.id,
                                 contract_number: c.contract_number,
                                 customer_name: c.customer_name,
                                 phone: phone,
                                 product_name: productName,
-                                next_installment: paidCount + 1,
+                                overdue_count: unpays.length,
+                                overdue_months: monthNamesStr,
+                                next_installment: unpays[0].installment_no,
                                 total_installments: totalInstallments,
                                 installment_amount: installmentAmount,
                                 due_day: dueDay
@@ -559,12 +582,12 @@
                     tbody.appendChild(tr);
                 });
 
-                // แสดงผลรายการบิลที่ยังไม่ชำระในหน้าหลังบ้าน
+                // แสดงผลรายการบิลค้างชำระพร้อมระบุจำนวนเดือนและเดือนไหนบ้าง
                 if (unpaidBillsList.length === 0) {
                     unpaidTbody.innerHTML = `
                         <tr>
-                            <td colspan="6" class="text-center text-success py-3 fw-bold">
-                                <i class="fa-solid fa-circle-check me-1"></i> ไม่มีรายการบิลค้างชำระในเดือนนี้
+                            <td colspan="7" class="text-center text-success py-3 fw-bold">
+                                <i class="fa-solid fa-circle-check me-1"></i> ไม่มีรายการบิลค้างชำระ
                             </td>
                         </tr>
                     `;
@@ -578,8 +601,12 @@
                             </td>
                             <td>${b.product_name}</td>
                             <td><span class="badge bg-warning text-dark">งวดที่ ${b.next_installment} / ${b.total_installments}</span></td>
-                            <td class="fw-bold text-danger">฿${b.installment_amount.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
-                            <td><i class="fa-regular fa-calendar me-1"></i>วันที่ ${b.due_day} ของเดือน</td>
+                            <td>
+                                <span class="badge bg-danger">ค้างชำระ ${b.overdue_count} เดือน</span><br>
+                                <small class="text-muted">เดือน: ${b.overdue_months}</small>
+                            </td>
+                            <td class="fw-bold text-danger">฿${(b.installment_amount * b.overdue_count).toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+                            <td><i class="fa-regular fa-calendar me-1"></i>วันที่ ${b.due_day} ของทุกเดือน</td>
                             <td class="text-center">
                                 <button class="btn btn-sm btn-success" onclick="payInstallment(${b.contract_id})">
                                     <i class="fa-solid fa-check me-1"></i> บันทึกชำระเงิน
@@ -657,7 +684,6 @@
                 document.getElementById('edit_phone').value = c.phone || '';
                 document.getElementById('edit_id_card').value = c.id_card || '';
                 document.getElementById('edit_product_name').value = c.product_name || '';
-                document.getElementById('edit_due_day').value = c.due_day || 5;
 
                 if (editModalObj) editModalObj.show();
             } catch (err) {
@@ -672,8 +698,7 @@
                 customer_name: document.getElementById('edit_customer_name').value,
                 phone: document.getElementById('edit_phone').value,
                 id_card: document.getElementById('edit_id_card').value,
-                product_name: document.getElementById('edit_product_name').value,
-                due_day: document.getElementById('edit_due_day').value
+                product_name: document.getElementById('edit_product_name').value
             };
 
             const res = await fetch(`/api/contracts/${id}`, {
