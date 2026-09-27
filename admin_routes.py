@@ -1,5 +1,6 @@
 import os
 import datetime
+import calendar
 import psycopg2
 import werkzeug
 from psycopg2.extras import RealDictCursor
@@ -13,6 +14,26 @@ TH_TZ = ZoneInfo('Asia/Bangkok')
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+
+def get_installment_due_date(created_at, due_day, installment_no):
+    if isinstance(created_at, str):
+        try:
+            created_at = datetime.datetime.strptime(created_at[:19], '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            created_at = datetime.datetime.now(TH_TZ)
+
+    start_year = created_at.year
+    start_month = created_at.month
+    
+    # คำนวณงวดที่ 1 ให้เป็นเดือนถัดไปจากวันที่ทำสัญญา
+    target_month_index = start_month + installment_no - 1
+    target_year = start_year + (target_month_index // 12)
+    target_month = (target_month_index % 12) + 1
+
+    last_day_of_month = calendar.monthrange(target_year, target_month)[1]
+    actual_day = min(due_day, last_day_of_month)
+
+    return datetime.date(target_year, target_month, actual_day)
 
 def send_push_thank_you(user_id, contract_number, product_name):
     if not user_id:
@@ -73,6 +94,48 @@ def get_db():
     conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     return conn
 
+def calculate_contract_overdue_status(cursor, c_dict):
+    today = datetime.datetime.now(TH_TZ).date()
+    cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c_dict['id'],))
+    payments = [dict(p) for p in cursor.fetchall()]
+
+    unpaid_payments = [p for p in payments if p['status'] != 'paid']
+    
+    overdue_count = 0
+    overdue_7d_flag = False
+    overdue_installments_list = []
+
+    for p in unpaid_payments:
+        due_date = get_installment_due_date(c_dict.get('created_at'), c_dict.get('due_day', 5), p['installment_no'])
+        if today > due_date:
+            overdue_count += 1
+            days_overdue = (today - due_date).days
+            overdue_installments_list.append(f"งวดที่ {p['installment_no']} (เกิน {days_overdue} วัน)")
+            if days_overdue >= 7:
+                overdue_7d_flag = True
+
+    # ปรับสถานะสัญญาตามจำนวนการค้างชำระ
+    new_status = c_dict.get('status', 'active')
+    if c_dict.get('status') not in ['closed', 'closed_early', 'cancelled']:
+        if overdue_count >= 3:
+            new_status = 'reclaim' # เรียกคืนเครื่อง
+        elif overdue_count == 2:
+            new_status = 'overdue_2' # ค้างชำระครั้งที่ 2
+        elif overdue_count == 1:
+            new_status = 'overdue_1' # ค้างชำระครั้งที่ 1
+        else:
+            new_status = 'active'
+            
+        if new_status != c_dict.get('status'):
+            cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (new_status, c_dict['id']))
+
+    c_dict['status'] = new_status
+    c_dict['overdue_count'] = overdue_count
+    c_dict['overdue_7d_flag'] = overdue_7d_flag
+    c_dict['overdue_installments_text'] = ", ".join(overdue_installments_list) if overdue_installments_list else "-"
+    c_dict['payments'] = payments
+    return c_dict
+
 @admin_bp.route('/')
 def index():
     try:
@@ -88,8 +151,8 @@ def index():
         contract_list = []
         for c in contracts:
             c_dict = dict(c)
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
-            payments = [dict(p) for p in cursor.fetchall()]
+            c_dict = calculate_contract_overdue_status(cursor, c_dict)
+            payments = c_dict['payments']
             
             c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
             c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
@@ -106,15 +169,16 @@ def index():
             remaining_amount = float(remaining_count * c_dict['installment_amount'])
             close_with_discount = remaining_amount * 0.85
             
-            c_dict['payments'] = payments
             c_dict['paid_count'] = paid_count
             c_dict['remaining_count'] = remaining_count
             c_dict['remaining_amount'] = remaining_amount
             c_dict['close_with_discount'] = close_with_discount
             contract_list.append(c_dict)
 
+        conn.commit()
         return render_template('admin.html', contracts=contract_list)
     except Exception as e:
+        conn.rollback()
         return f"Error loading admin page: {str(e)}", 500
     finally:
         cursor.close()
@@ -282,9 +346,9 @@ def process_contracts_api():
         contract_list = []
         for c in contracts:
             c_dict = dict(c)
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (c['id'],))
-            payments = [dict(p) for p in cursor.fetchall()]
-            
+            c_dict = calculate_contract_overdue_status(cursor, c_dict)
+            payments = c_dict['payments']
+
             c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
             c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
 
@@ -300,13 +364,13 @@ def process_contracts_api():
             remaining_amount = float(remaining_count * c_dict['installment_amount'])
             close_with_discount = remaining_amount * 0.85
             
-            c_dict['payments'] = payments
             c_dict['paid_count'] = paid_count
             c_dict['remaining_count'] = remaining_count
             c_dict['remaining_amount'] = remaining_amount
             c_dict['close_with_discount'] = close_with_discount
             contract_list.append(c_dict)
 
+        conn.commit()
         return jsonify(contract_list)
     except Exception as e:
         conn.rollback()
@@ -400,8 +464,8 @@ def process_contract_detail_api(contract_id):
             return jsonify({'message': 'ลบสัญญาสำเร็จและตรวจสอบเงื่อนไขแจ้งเตือนลูกค้าแล้ว', 'contract_id': contract_id})
 
         c_dict = dict(contract)
-        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
-        payments = [dict(p) for p in cursor.fetchall()]
+        c_dict = calculate_contract_overdue_status(cursor, c_dict)
+        payments = c_dict['payments']
 
         c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
         c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
@@ -418,12 +482,12 @@ def process_contract_detail_api(contract_id):
         remaining_amount = float(remaining_count * c_dict['installment_amount'])
         close_with_discount = remaining_amount * 0.85
 
-        c_dict['payments'] = payments
         c_dict['paid_count'] = paid_count
         c_dict['remaining_count'] = remaining_count
         c_dict['remaining_amount'] = remaining_amount
         c_dict['close_with_discount'] = close_with_discount
 
+        conn.commit()
         return jsonify(c_dict)
     except Exception as e:
         conn.rollback()
@@ -494,7 +558,9 @@ def pay_contract_installment_api(contract_id):
         conn.commit()
 
         cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-        contract = cursor.fetchone()
+        contract = dict(cursor.fetchone())
+        calculate_contract_overdue_status(cursor, contract)
+        
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
         all_payments = cursor.fetchall()
 
@@ -558,7 +624,9 @@ def unpay_contract_installment_api(contract_id):
         conn.commit()
 
         cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-        contract = cursor.fetchone()
+        contract = dict(cursor.fetchone())
+        calculate_contract_overdue_status(cursor, contract)
+
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
         all_payments = cursor.fetchall()
 

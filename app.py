@@ -110,7 +110,8 @@ def get_installment_due_date(created_at, due_day, installment_no):
     start_year = created_at.year
     start_month = created_at.month
     
-    target_month_index = start_month + (installment_no - 1) - 1
+    # แก้ไข: งวดแรก (installment_no = 1) ให้เป็นเดือนถัดไปทันที
+    target_month_index = start_month + installment_no - 1
     target_year = start_year + (target_month_index // 12)
     target_month = (target_month_index % 12) + 1
 
@@ -278,7 +279,7 @@ def check_due_notifications():
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE status = 'active'")
+        cursor.execute("SELECT * FROM contracts WHERE status IN ('active', 'overdue_1', 'overdue_2')")
         contracts = cursor.fetchall()
 
         for c in contracts:
@@ -567,7 +568,7 @@ def send_contract_status(user_id, reply_token):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early', 'cancelled') ORDER BY id DESC LIMIT 1", (user_id,))
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early', 'cancelled', 'reclaim') ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
 
         if not contract:
@@ -590,7 +591,7 @@ def send_contract_only(user_id, reply_token):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early', 'cancelled') ORDER BY id DESC LIMIT 1", (user_id,))
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early', 'cancelled', 'reclaim') ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
 
         if not contract:
@@ -639,6 +640,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
         footer_contents = []
         is_closed = contract['status'] in ['closed', 'closed_early'] or paid_count >= contract['total_installments']
         is_cancelled = contract['status'] == 'cancelled'
+        is_reclaim = contract['status'] == 'reclaim'
 
         if not show_buttons:
             footer_contents.append({
@@ -657,7 +659,17 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                     "text": "❌ สัญญานี้ถูกยกเลิกแล้ว",
                     "align": "center",
                     "color": "#e74c3c",
-                    "weight": "bold"
+                    "weight": "bold",
+                    "wrap": True
+                })
+            elif is_reclaim:
+                footer_contents.append({
+                    "type": "text",
+                    "text": "🚨 สถานะ: เรียกคืนเครื่อง (ค้างชำระเกินกำหนด)",
+                    "align": "center",
+                    "color": "#d63031",
+                    "weight": "bold",
+                    "wrap": True
                 })
             elif not is_closed:
                 footer_contents.append({
@@ -686,31 +698,33 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                     "text": "🔒 ปิดยอดเรียบร้อยแล้ว",
                     "align": "center",
                     "color": "#27ae60",
-                    "weight": "bold"
+                    "weight": "bold",
+                    "wrap": True
                 })
 
+        # แก้ไข UI: ใส่ wrap: True เพื่อให้ข้อความยาวบรรทัดใหม่ได้ ไม่ถูกตัดขอบ
         flex_contents = {
             "type": "bubble",
             "body": {
                 "type": "box",
                 "layout": "vertical",
                 "contents": [
-                    {"type": "text", "text": "ข้อมูลสัญญาผ่อนชำระ", "weight": "bold", "size": "xl", "color": "#1DB446"},
+                    {"type": "text", "text": "ข้อมูลสัญญาผ่อนชำระ", "weight": "bold", "size": "xl", "color": "#1DB446", "wrap": True},
                     {"type": "separator", "margin": "md"},
                     {"type": "box", "layout": "vertical", "margin": "md", "spacing": "sm", "contents": [
-                        {"type": "text", "text": f"เลขที่สัญญา: {contract['contract_number']}", "size": "sm", "weight": "bold", "color": "#0d6efd"},
-                        {"type": "text", "text": f"ชื่อ-สกุลลูกค้า: {contract['customer_name']}", "size": "sm"},
-                        {"type": "text", "text": f"เลขบัตรปชช: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm"},
-                        {"type": "text", "text": f"เบอร์โทรลูกค้า: {contract['phone'] if contract['phone'] else '-'}", "size": "sm"},
-                        {"type": "text", "text": f"รุ่นสินค้า: {contract['product_name']}", "size": "sm"},
-                        {"type": "text", "text": f"IMEI: {contract['imei'] if contract['imei'] else '-'}", "size": "sm"},
-                        {"type": "text", "text": f"Serial No: {contract['serial_number'] if contract['serial_number'] else '-'}", "size": "sm"},
-                        {"type": "text", "text": f"สี/ความจุ: {contract['color'] if contract['color'] else '-'} / {contract['capacity'] if contract['capacity'] else '-'}", "size": "sm"},
-                        {"type": "text", "text": f"วันที่ทำสัญญา: {created_at_str}", "size": "sm"},
-                        {"type": "text", "text": f"จำนวนเงินรวม: {float(contract['total_amount']):,.2f} บาท", "size": "sm"},
-                        {"type": "text", "text": f"จำนวนงวดที่จ่าย: {paid_count} / {contract['total_installments']} งวด", "size": "sm"},
-                        {"type": "text", "text": f"กำหนดชำระถัดไป: {due_date_str}", "size": "sm", "weight": "bold", "color": "#e67e22"},
-                        {"type": "text", "text": f"จำนวนเงินต่องวด: {float(contract['installment_amount']):,.2f} บาท", "size": "sm", "weight": "bold", "color": "#2c3e50"}
+                        {"type": "text", "text": f"เลขที่สัญญา: {contract['contract_number']}", "size": "sm", "weight": "bold", "color": "#0d6efd", "wrap": True},
+                        {"type": "text", "text": f"ชื่อ-สกุลลูกค้า: {contract['customer_name']}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"เลขบัตรปชช: {contract['id_card'] if contract['id_card'] else '-'}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"เบอร์โทรลูกค้า: {contract['phone'] if contract['phone'] else '-'}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"รุ่นสินค้า: {contract['product_name']}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"IMEI: {contract['imei'] if contract['imei'] else '-'}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"Serial No: {contract['serial_number'] if contract['serial_number'] else '-'}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"สี/ความจุ: {contract['color'] if contract['color'] else '-'} / {contract['capacity'] if contract['capacity'] else '-'}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"วันที่ทำสัญญา: {created_at_str}", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"จำนวนเงินรวม: {float(contract['total_amount']):,.2f} บาท", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"จำนวนงวดที่จ่าย: {paid_count} / {contract['total_installments']} งวด", "size": "sm", "wrap": True},
+                        {"type": "text", "text": f"กำหนดชำระถัดไป: {due_date_str}", "size": "sm", "weight": "bold", "color": "#e67e22", "wrap": True},
+                        {"type": "text", "text": f"จำนวนเงินต่องวด: {float(contract['installment_amount']):,.2f} บาท", "size": "sm", "weight": "bold", "color": "#2c3e50", "wrap": True}
                     ]}
                 ]
             },
@@ -736,7 +750,7 @@ def send_payment_qr(user_id, installment_no, reply_token):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
 
         if not contract:
@@ -791,7 +805,7 @@ def send_early_close_qr(user_id, reply_token):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status = 'active' ORDER BY id DESC LIMIT 1", (user_id,))
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
 
         if not contract:
