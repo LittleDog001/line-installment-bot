@@ -3,6 +3,7 @@ import io
 import datetime
 import urllib.parse
 import psycopg2
+import werkzeug
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
 from flask import Flask, request, abort, render_template, jsonify, send_file
@@ -59,11 +60,15 @@ def init_db():
             installment_amount NUMERIC(12, 2),
             due_day INTEGER DEFAULT 5,
             status VARCHAR(50) DEFAULT 'active',
+            evidence_file TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     ''')
     cursor.execute('''
         ALTER TABLE contracts ADD COLUMN IF NOT EXISTS due_day INTEGER DEFAULT 5;
+    ''')
+    cursor.execute('''
+        ALTER TABLE contracts ADD COLUMN IF NOT EXISTS evidence_file TEXT;
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
@@ -413,8 +418,10 @@ def handle_message(event):
     user_text = event.message.text.strip()
     user_id = event.source.user_id
 
-    if user_text in ["เช็คยอด", "เช็คค่างวด", "เมนู", "สัญญา"]:
+    if user_text in ["เช็คยอด", "เช็คค่างวด", "เมนู"]:
         send_contract_status(user_id, event.reply_token)
+    elif user_text == "สัญญา":
+        send_contract_only(user_id, event.reply_token)
     elif user_text.startswith("ชำระงวดที่"):
         try:
             installment_no = int(user_text.replace("ชำระงวดที่", "").strip())
@@ -453,7 +460,7 @@ def search_contract_and_reply(user_id, search_term, reply_token):
                 cursor.execute("UPDATE contracts SET line_user_id = %s WHERE id = %s", (user_id, contract['id']))
                 conn.commit()
 
-            render_flex_contract(contract, reply_token)
+            render_flex_contract(contract, reply_token, show_buttons=True)
         else:
             line_bot_api.reply_message(
                 reply_token,
@@ -487,12 +494,35 @@ def send_contract_status(user_id, reply_token):
             )
             return
 
-        render_flex_contract(contract, reply_token)
+        render_flex_contract(contract, reply_token, show_buttons=True)
     finally:
         cursor.close()
         conn.close()
 
-def render_flex_contract(contract, reply_token):
+def send_contract_only(user_id, reply_token):
+    try:
+        conn = get_db()
+    except Exception:
+        return
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'closed', 'closed_early', 'cancelled') ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            line_bot_api.reply_message(
+                reply_token, 
+                TextSendMessage(text="ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้")
+            )
+            return
+
+        render_flex_contract(contract, reply_token, show_buttons=False)
+    finally:
+        cursor.close()
+        conn.close()
+
+def render_flex_contract(contract, reply_token, show_buttons=True):
     try:
         conn = get_db()
     except Exception:
@@ -505,53 +535,61 @@ def render_flex_contract(contract, reply_token):
 
         paid_count = sum(1 for p in payments if p['status'] == 'paid')
         
-        # จัดรูปแบบวันที่ทำสัญญา
         created_at_str = str(contract['created_at'])[:10] if contract.get('created_at') else '-'
 
         footer_contents = []
         is_closed = contract['status'] in ['closed', 'closed_early'] or paid_count >= contract['total_installments']
         is_cancelled = contract['status'] == 'cancelled'
 
-        if is_cancelled:
-            footer_contents.append({
-                "type": "text",
-                "text": "❌ สัญญานี้ถูกยกเลิกแล้ว",
-                "align": "center",
-                "color": "#e74c3c",
-                "weight": "bold"
-            })
-        elif not is_closed:
+        if not show_buttons:
             footer_contents.append({
                 "type": "button",
-                "style": "primary",
-                "color": "#1DB446",
+                "style": "link",
                 "action": {
-                    "type": "message",
-                    "label": f"จ่ายงวดที่ {paid_count + 1} ({float(contract['installment_amount']):,.2f} บ.)",
-                    "text": f"ชำระงวดที่ {paid_count + 1}"
-                }
-            })
-            footer_contents.append({
-                "type": "button",
-                "style": "secondary",
-                "color": "#e67e22",
-                "action": {
-                    "type": "message",
-                    "label": "ปิดยอดทั้งหมด (ส่วนลด 15%)",
-                    "text": "ปิดยอดก่อนกำหนด"
+                    "type": "uri",
+                    "label": "📄 เปิดดูเอกสารสัญญาฉบับเต็ม",
+                    "uri": f"{request.host_url.rstrip('/')}/contract/doc/{contract['id']}"
                 }
             })
         else:
-            footer_contents.append({
-                "type": "text",
-                "text": "🔒 ปิดยอดเรียบร้อยแล้ว",
-                "align": "center",
-                "color": "#27ae60",
-                "weight": "bold"
-            })
+            if is_cancelled:
+                footer_contents.append({
+                    "type": "text",
+                    "text": "❌ สัญญานี้ถูกยกเลิกแล้ว",
+                    "align": "center",
+                    "color": "#e74c3c",
+                    "weight": "bold"
+                })
+            elif not is_closed:
+                footer_contents.append({
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#1DB446",
+                    "action": {
+                        "type": "message",
+                        "label": f"จ่ายงวดที่ {paid_count + 1} ({float(contract['installment_amount']):,.2f} บ.)",
+                        "text": f"ชำระงวดที่ {paid_count + 1}"
+                    }
+                })
+                footer_contents.append({
+                    "type": "button",
+                    "style": "secondary",
+                    "color": "#e67e22",
+                    "action": {
+                        "type": "message",
+                        "label": "ปิดยอดทั้งหมด (ส่วนลด 15%)",
+                        "text": "ปิดยอดก่อนกำหนด"
+                    }
+                })
+            else:
+                footer_contents.append({
+                    "type": "text",
+                    "text": "🔒 ปิดยอดเรียบร้อยแล้ว",
+                    "align": "center",
+                    "color": "#27ae60",
+                    "weight": "bold"
+                })
 
-        # แสดงเฉพาะข้อมูลที่ระบุตามกฎข้อ 1:
-        # เลขที่สัญญา, ชื่อสกุลลูกค้า, เลขบัตรปชช, เบอร์โทรลูกค้า, วันที่ทำสัญญา, จำนวนเงินรวม, จำนวนงวดที่จ่าย, จำนวนเงินที่จ่ายในแต่ละงวด
         flex_contents = {
             "type": "bubble",
             "body": {

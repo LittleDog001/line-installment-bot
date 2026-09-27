@@ -1,6 +1,7 @@
 import os
 import datetime
 import psycopg2
+import werkzeug
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
@@ -140,7 +141,6 @@ def create_contract():
 
         total_installments = int(raw_installments) if raw_installments else 0
         
-        # ใช้เป็นวันที่ทำสัญญาเป็นวันที่ชำระในแต่ละเดือนอัตโนมัติ
         now_time = datetime.datetime.now(TH_TZ)
         due_day = now_time.day
 
@@ -156,16 +156,27 @@ def create_contract():
 
         contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
 
+        # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา
+        evidence_filename = None
+        evidence_file = request.files.get('evidence_file')
+        if evidence_file and evidence_file.filename:
+            filename = werkzeug.utils.secure_filename(evidence_file.filename)
+            timestamp_str = now_time.strftime('%Y%m%d%H%M%S')
+            evidence_filename = f"ev_{timestamp_str}_{filename}"
+            upload_folder = os.path.join('static', 'uploads')
+            os.makedirs(upload_folder, exist_ok=True)
+            evidence_file.save(os.path.join(upload_folder, evidence_filename))
+
         cursor.execute("""
             INSERT INTO contracts (
                 contract_number, line_user_id, customer_name, id_card, phone, 
-                product_name, total_amount, total_installments, installment_amount, due_day, status
+                product_name, total_amount, total_installments, installment_amount, due_day, status, evidence_file
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
             RETURNING id
         """, (
             contract_number, line_user_id, customer_name, id_card, phone, 
-            product_name, total_amount, total_installments, installment_amount, due_day
+            product_name, total_amount, total_installments, installment_amount, due_day, evidence_filename
         ))
         
         contract_row = cursor.fetchone()
@@ -196,7 +207,7 @@ def process_contracts_api():
     cursor = conn.cursor()
     try:
         if request.method == 'POST':
-            data = request.get_json(silent=True) or request.form
+            data = request.form if request.form else (request.get_json(silent=True) or {})
             line_user_id = (data.get('line_user_id') or '').strip()
             customer_name = (data.get('customer_name') or '').strip()
             id_card = (data.get('id_card') or '').strip()
@@ -224,16 +235,27 @@ def process_contracts_api():
 
             contract_number = f"CTR-{now_time.strftime('%Y%m%d%H%M%S')}"
 
+            # จัดการอัปโหลดไฟล์หลักฐานการทำสัญญา (รองรับทั้ง Form-Data และ JSON)
+            evidence_filename = None
+            evidence_file = request.files.get('evidence_file') if request.files else None
+            if evidence_file and evidence_file.filename:
+                filename = werkzeug.utils.secure_filename(evidence_file.filename)
+                timestamp_str = now_time.strftime('%Y%m%d%H%M%S')
+                evidence_filename = f"ev_{timestamp_str}_{filename}"
+                upload_folder = os.path.join('static', 'uploads')
+                os.makedirs(upload_folder, exist_ok=True)
+                evidence_file.save(os.path.join(upload_folder, evidence_filename))
+
             cursor.execute("""
                 INSERT INTO contracts (
                     contract_number, line_user_id, customer_name, id_card, phone, 
-                    product_name, total_amount, total_installments, installment_amount, due_day, status
+                    product_name, total_amount, total_installments, installment_amount, due_day, status, evidence_file
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
                 RETURNING id
             """, (
                 contract_number, line_user_id, customer_name, id_card, phone, 
-                product_name, total_amount, total_installments, installment_amount, due_day
+                product_name, total_amount, total_installments, installment_amount, due_day, evidence_filename
             ))
             
             contract_row = cursor.fetchone()

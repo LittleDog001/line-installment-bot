@@ -144,7 +144,7 @@
             <div class="col-lg-4">
                 <div class="card card-custom p-4 bg-white">
                     <h5 class="fw-bold text-dark mb-3"><i class="fa-solid fa-plus-circle text-primary me-2"></i>เพิ่มสัญญาผ่อนชำระใหม่</h5>
-                    <form id="addContractForm">
+                    <form id="addContractForm" enctype="multipart/form-data">
                         <div class="mb-2">
                             <label class="form-label small text-muted">ชื่อ-นามสกุล ลูกค้า</label>
                             <input type="text" id="customer_name" class="form-control" placeholder="เช่น สมชาย ใจดี" required>
@@ -160,6 +160,12 @@
                         <div class="mb-2">
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
                             <input type="text" id="product_name" class="form-control" placeholder="เช่น iPhone 15 Pro Max" required>
+                        </div>
+
+                        <!-- เพิ่มระบบอัปโหลดหลักฐานการทำสัญญา (รูป/ไฟล์) -->
+                        <div class="mb-2">
+                            <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>หลักฐานการทำสัญญา (รูปภาพ/PDF)</label>
+                            <input type="file" id="evidence_file" class="form-control" accept="image/*,.pdf">
                         </div>
 
                         <!-- รูปแบบการระบุราคาและจำนวนงวด -->
@@ -213,7 +219,7 @@
                             <thead class="table-light">
                                 <tr class="small text-muted">
                                     <th>สัญญา/ลูกค้า</th>
-                                    <th>สินค้า</th>
+                                    <th>สินค้า/หลักฐาน</th>
                                     <th>งวดชำระ/กำหนด</th>
                                     <th>วันที่ทำสัญญา</th>
                                     <th>สถานะ</th>
@@ -366,20 +372,23 @@
 
         document.getElementById('addContractForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const data = {
-                customer_name: document.getElementById('customer_name').value,
-                phone: document.getElementById('phone').value,
-                id_card: document.getElementById('id_card').value,
-                product_name: document.getElementById('product_name').value,
-                total_amount: document.getElementById('total_amount').value,
-                total_installments: document.getElementById('total_installments').value,
-                installment_amount: document.getElementById('installment_amount').value
-            };
+            const formData = new FormData();
+            formData.append('customer_name', document.getElementById('customer_name').value);
+            formData.append('phone', document.getElementById('phone').value);
+            formData.append('id_card', document.getElementById('id_card').value);
+            formData.append('product_name', document.getElementById('product_name').value);
+            formData.append('total_amount', document.getElementById('total_amount').value);
+            formData.append('total_installments', document.getElementById('total_installments').value);
+            formData.append('installment_amount', document.getElementById('installment_amount').value);
+            
+            const evidenceInput = document.getElementById('evidence_file');
+            if (evidenceInput.files[0]) {
+                formData.append('evidence_file', evidenceInput.files[0]);
+            }
 
             const res = await fetch('/api/contracts', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: formData
             });
 
             if (res.ok) {
@@ -435,10 +444,10 @@
                     const idCard = c.id_card ? ` (ปชช: ${c.id_card})` : '';
                     const dueDay = c.due_day || 5;
                     const createdAtFormatted = c.created_at_formatted || '-';
+                    const evidenceFile = c.evidence_file || '';
 
                     totalPaid += (paidCount * installmentAmount);
 
-                    // คำนวณบิลประจำเดือนนี้
                     if (isStatusActive) {
                         dueThisMonthCount++;
                         
@@ -458,17 +467,14 @@
                         }
                     }
 
-                    // คำนวณรายการค้างชำระ: ตรวจสอบทุกงวดที่เลยกำหนดและยังไม่จ่าย (ว่างวดแรกเริ่มเดือนถัดไปจากเดือนทำสัญญา)
                     if (isStatusActive && c.payments && Array.isArray(c.payments)) {
                         let contractCreateDate = c.created_at && c.created_at !== '-' ? new Date(c.created_at) : new Date();
                         let unpays = [];
 
                         c.payments.forEach(p => {
                             if (p.status !== 'paid') {
-                                // งวดที่ i เริ่มต้นเดือนถัดไป (i=1 คือเดือนถัดจากสร้างสัญญา)
                                 let targetDate = new Date(contractCreateDate.getFullYear(), contractCreateDate.getMonth() + p.installment_no, dueDay);
                                 
-                                // เช็คว่าถึงกำหนดหรือเลยกำหนดแล้วหรือยัง (เทียบกับวันปัจจุบัน)
                                 if (targetDate <= now) {
                                     unpays.push({
                                         installment_no: p.installment_no,
@@ -549,6 +555,8 @@
                         `;
                     }
 
+                    let evidenceLinkHtml = evidenceFile ? `<br><a href="/static/uploads/${evidenceFile}" target="_blank" class="badge bg-info text-dark text-decoration-none mt-1"><i class="fa-solid fa-file-arrow-down me-1"></i>ดูหลักฐานสัญญา</a>` : `<br><small class="text-muted">ไม่มีไฟล์หลักฐาน</small>`;
+
                     tr.innerHTML = `
                         <td>
                             <strong class="text-primary">${c.contract_number}</strong><br>
@@ -558,6 +566,7 @@
                         <td>
                             <span class="fw-semibold">${productName}</span><br>
                             <small class="text-muted">฿${installmentAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})}/งวด (รวม ฿${totalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})})</small>
+                            ${evidenceLinkHtml}
                         </td>
                         <td>
                             <span class="badge bg-primary fs-6 mb-1">${paidCount} / ${totalInstallments}</span><br>
@@ -582,7 +591,6 @@
                     tbody.appendChild(tr);
                 });
 
-                // แสดงผลรายการบิลค้างชำระพร้อมระบุจำนวนเดือนและเดือนไหนบ้าง
                 if (unpaidBillsList.length === 0) {
                     unpaidTbody.innerHTML = `
                         <tr>
