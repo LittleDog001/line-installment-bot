@@ -115,8 +115,8 @@ def get_installment_due_date(created_at, due_day, installment_no):
     start_year = created_at.year
     start_month = created_at.month
     
-    # แก้ไข: งวดแรก (installment_no = 1) ให้เป็นเดือนถัดไปทันที
-    target_month_index = start_month + installment_no
+    # แก้ไข: คำนวณงวดที่ 1 ให้เป็นเดือนถัดไปจากเดือนที่ทำสัญญาจริงทันที และตรงกับหลังบ้าน
+    target_month_index = (start_month - 1) + installment_no
     target_year = start_year + (target_month_index // 12)
     target_month = (target_month_index % 12) + 1
 
@@ -492,7 +492,6 @@ def handle_message(event):
         search_contract_and_reply(user_id, user_text, event.reply_token)
 
 def notify_admin_early_close(user_id, trigger_text):
-    """ แจ้งเตือนและอัปเดตสถานะการขอปิดยอดในระบบหลังบ้านเมื่อลูกค้ากดปิดยอด """
     try:
         conn = get_db()
     except Exception as e:
@@ -521,10 +520,8 @@ def notify_admin_early_close(user_id, trigger_text):
                 next_p = unpaid_list[0]
                 bill_info += f" (งวดถัดไป: งวดที่ {next_p['installment_no']})"
 
-            # แจ้งเตือนผู้ดูแลระบบหลังบ้าน
             print(f"[ADMIN NOTIFICATION] 🚨 แจ้งเตือนลูกค้ากดปิดยอดทั้งหมด! สัญญาเลขที่: {contract['contract_number']} | ลูกค้า: {contract['customer_name']} ({contract['phone']}) | รายละเอียดบิล: {bill_info} | ข้อความที่ส่ง: '{trigger_text}'")
             
-            # ส่งข้อความแจ้งเตือนเข้าแชท Line ของผู้ดูแลระบบ หากมีการตั้งค่า ADMIN_LINE_USER_ID ไว้
             admin_line_id = os.environ.get('ADMIN_LINE_USER_ID')
             if admin_line_id:
                 admin_msg = (

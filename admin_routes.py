@@ -94,8 +94,8 @@ def get_installment_due_date(created_at, due_day, installment_no):
     start_year = created_at.year
     start_month = created_at.month
     
-    # แก้ไข: คำนวณงวดที่ 1 ให้ตรงกับเดือนที่ทำสัญญาจริง (ไม่งวดแรกบวกเกินไป 1 เดือน)
-    target_month_index = (start_month - 1) + (installment_no - 1)
+    # แก้ไข: คำนวณงวดที่ 1 ให้เป็นเดือนถัดไปจากเดือนที่ทำสัญญาจริงทันที
+    target_month_index = (start_month - 1) + installment_no
     target_year = start_year + (target_month_index // 12)
     target_month = (target_month_index % 12) + 1
 
@@ -693,7 +693,6 @@ def pay_contract_installment_api(contract_id):
             conn.commit()
             send_push_thank_you(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
         else:
-            # เพิ่มระบบส่งการแจ้งเตือนการชำระเงินเป็นรายงวดเข้า LINE ของลูกค้า
             send_push_payment_notification(
                 contract.get('line_user_id'), 
                 contract.get('contract_number'), 
@@ -850,7 +849,6 @@ def close_contract_early_api(contract_id):
 @admin_bp.route('/api/contracts/<int:contract_id>/reject_early_close', methods=['POST', 'PUT'])
 @admin_bp.route('/contracts/<int:contract_id>/reject_early_close', methods=['POST', 'PUT'])
 def reject_early_close_api(contract_id):
-    """ เพิ่มฟังก์ชันรองรับการปฏิเสธการขอปิดยอดก่อนกำหนด """
     try:
         conn = get_db()
     except Exception as e:
