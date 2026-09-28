@@ -115,19 +115,8 @@ def send_push_thank_you(user_id, contract_number, product_name):
         print(f"Error sending thank you message to {user_id}: {e}")
 
 def send_push_cancellation(user_id, contract_number, product_name, contract_status="active"):
-    if not user_id:
-        return
-    
-    if contract_status in ['closed', 'closed_early']:
-        print(f"Contract {contract_number} is already closed/completed. Skipping cancellation notification.")
-        return
-
-    try:
-        body_text = "สัญญาเช่าซื้อของคุณได้ถูก ยกเลิก / ลบออกจากระบบ เรียบร้อยแล้วครับ หากมีข้อสงสัยประการใดกรุณาติดต่อเจ้าหน้าที่ 🙏"
-        flex_msg = build_flex_message_ui("⚠️ แจ้งเตือนสถานะสัญญา", body_text, contract_number, product_name, color="#dc3545")
-        line_bot_api.push_message(user_id, flex_msg)
-    except Exception as e:
-        print(f"Error sending cancellation message to {user_id}: {e}")
+    # ยกเลิกการส่งการแจ้งเตือนไปยังลูกค้าเมื่อมีการลบสัญญาในหลังบ้าน
+    pass
 
 def send_push_contract_updated(user_id, contract_number, product_name, updated_fields_text):
     if not user_id:
@@ -508,12 +497,9 @@ def process_contract_detail_api(contract_id):
             return jsonify({'message': 'แก้ไขสัญญาและจัดการหลักฐานสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
-            if contract.get('line_user_id'):
-                send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'), contract.get('status'))
-
             cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
             conn.commit()
-            return jsonify({'message': 'ลบสัญญาสำเร็จและตรวจสอบเงื่อนไขแจ้งเตือนลูกค้าแล้ว', 'contract_id': contract_id})
+            return jsonify({'message': 'ลบสัญญาสำเร็จเรียบร้อยแล้ว', 'contract_id': contract_id})
 
         c_dict = dict(contract)
         c_dict = calculate_contract_overdue_status(cursor, c_dict)
@@ -714,12 +700,6 @@ def update_contract_status_api(contract_id):
 
         cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (status, contract_id))
         conn.commit()
-
-        if status.lower() == 'cancelled':
-            cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-            contract = cursor.fetchone()
-            if contract:
-                send_push_cancellation(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'), contract.get('status'))
 
         return jsonify({'message': 'อัปเดตสถานะสัญญาเรียบร้อยแล้ว', 'status': status})
     except Exception as e:

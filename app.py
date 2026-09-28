@@ -149,13 +149,10 @@ def root_api_contract_detail(contract_id):
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
             contract = cursor.fetchone()
-            if contract and contract.get('line_user_id') and contract.get('status') not in ['closed', 'closed_early']:
-                cancel_msg = "สัญญาเช่าซื้อของคุณได้ถูก ยกเลิก / ลบออกจากระบบ เรียบร้อยแล้วครับ 🙏"
-                send_simple_push_notification(contract['line_user_id'], cancel_msg, title="⚠️ แจ้งเตือนสถานะสัญญา", contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#dc3545")
             cursor.close()
             conn.close()
         except Exception as e:
-            print(f"Error sending push on root delete contract: {e}")
+            print(f"Error on root delete contract: {e}")
             
     return process_contract_detail_api(contract_id)
 
@@ -180,9 +177,6 @@ def root_api_update_contract_status(contract_id):
         if new_status.lower() == 'cancelled':
             cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
             contract = cursor.fetchone()
-            if contract and contract.get('line_user_id'):
-                cancel_msg = "สัญญาเช่าซื้อของคุณได้ถูก ยกเลิก จากทางระบบเรียบร้อยแล้วครับ 🙏"
-                send_simple_push_notification(contract['line_user_id'], cancel_msg, title="⚠️ แจ้งเตือนสถานะสัญญา", contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#dc3545")
 
         return jsonify({"success": True, "message": f"Contract status updated to '{new_status}' successfully", "status": new_status})
     except Exception as e:
@@ -487,7 +481,7 @@ def handle_message(event):
         except ValueError:
             flex_msg = build_flex_message_ui("⚠️ แจ้งเตือน", "รูปแบบคำสั่งไม่ถูกต้องครับ", color="#dc3545")
             line_bot_api.reply_message(event.reply_token, flex_msg)
-    elif user_text in ["ปิดยอดก่อนกำหนด", "ปิดยอด"]:
+    elif user_text in ["ปิดยอดก่อนกำหนด", "ปิดยอด", "ปิดยอดทั้งหมด"]:
         notify_admin_early_close(user_id, user_text)
         send_early_close_qr(user_id, event.reply_token)
     else:
@@ -515,7 +509,32 @@ def notify_admin_early_close(user_id, trigger_text):
                 next_p = unpaid_list[0]
                 bill_info += f" (งวดถัดไป: งวดที่ {next_p['installment_no']})"
 
-            print(f"[ADMIN NOTIFICATION] 🚨 ลูกค้าสนใจปิดยอด! สัญญาเลขที่: {contract['contract_number']} | ลูกค้า: {contract['customer_name']} ({contract['phone']}) | รายละเอียดบิล: {bill_info} | ข้อความที่ส่ง: '{trigger_text}'")
+            # แจ้งเตือนผู้ดูแลระบบหลังบ้าน
+            print(f"[ADMIN NOTIFICATION] 🚨 แจ้งเตือนลูกค้ากดปิดยอดทั้งหมด! สัญญาเลขที่: {contract['contract_number']} | ลูกค้า: {contract['customer_name']} ({contract['phone']}) | รายละเอียดบิล: {bill_info} | ข้อความที่ส่ง: '{trigger_text}'")
+            
+            # ส่งข้อความแจ้งเตือนเข้าแชท Line ของผู้ดูแลระบบ หากมีการตั้งค่า ADMIN_LINE_USER_ID ไว้
+            admin_line_id = os.environ.get('ADMIN_LINE_USER_ID')
+            if admin_line_id:
+                admin_msg = (
+                    f"🚨 แจ้งเตือนลูกค้าขอปิดยอดทั้งหมด!\n"
+                    f"เลขที่สัญญา: {contract['contract_number']}\n"
+                    f"ชื่อลูกค้า: {contract['customer_name']}\n"
+                    f"เบอร์โทร: {contract['phone']}\n"
+                    f"สินค้า: {contract['product_name']}\n"
+                    f"สถานะบิล: {bill_info}\n\n"
+                    f"กรุณาตรวจสอบระบบหลังบ้านครับ"
+                )
+                try:
+                    flex_admin = build_flex_message_ui(
+                        title="🔔 แจ้งเตือนลูกค้าปิดยอดทั้งหมด",
+                        body_text=admin_msg,
+                        contract_number=contract.get('contract_number'),
+                        product_name=contract.get('product_name'),
+                        color="#fd7e14"
+                    )
+                    line_bot_api.push_message(admin_line_id, flex_admin)
+                except Exception as push_err:
+                    print(f"Error pushing admin alert: {push_err}")
     except Exception as e:
         print(f"Error notifying admin for early close: {e}")
     finally:
@@ -644,15 +663,8 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
         is_reclaim = contract['status'] == 'reclaim'
 
         if not show_buttons:
-            footer_contents.append({
-                "type": "button",
-                "style": "link",
-                "action": {
-                    "type": "uri",
-                    "label": "📄 เปิดดูเอกสารสัญญาฉบับเต็ม",
-                    "uri": f"{request.host_url.rstrip('/')}/contract/doc/{contract['id']}"
-                }
-            })
+            # แก้ไม่ต้องมีปุ่มดูสัญญาในหน้าของลูกค้า
+            pass
         else:
             if is_cancelled:
                 footer_contents.append({
@@ -704,6 +716,148 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                 })
 
         # ดีไซน์ Flex Message ในรูปแบบทันสมัยสไตล์การ์ดดิจิทัล
+        body_contents = [
+            {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#f8f9fa",
+                "cornerRadius": "md",
+                "paddingAll": "md",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": "ผู้เช่าซื้อ", "size": "xs", "color": "#6c757d"},
+                            {"type": "text", "text": f"{contract['customer_name']}", "size": "xs", "color": "#212529", "weight": "bold", "align": "end", "wrap": True}
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "xs",
+                        "contents": [
+                            {"type": "text", "text": "เบอร์โทรศัพท์", "size": "xs", "color": "#6c757d"},
+                            {"type": "text", "text": f"{contract['phone'] if contract['phone'] else '-'}", "size": "xs", "color": "#212529", "align": "end"}
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "xs",
+                        "contents": [
+                            {"type": "text", "text": "เลขบัตรประชาชน", "size": "xs", "color": "#6c757d"},
+                            {"type": "text", "text": f"{contract['id_card'] if contract['id_card'] else '-'}", "size": "xs", "color": "#212529", "align": "end"}
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#f8f9fa",
+                "cornerRadius": "md",
+                "paddingAll": "md",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": "IMEI / Serial", "size": "xs", "color": "#6c757d"},
+                            {"type": "text", "text": f"{contract['imei'] if contract['imei'] else (contract['serial_number'] if contract['serial_number'] else '-')}", "size": "xs", "color": "#212529", "align": "end", "wrap": True}
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "xs",
+                        "contents": [
+                            {"type": "text", "text": "สเปกเครื่อง", "size": "xs", "color": "#6c757d"},
+                            {"type": "text", "text": f"{contract['color'] if contract['color'] else '-'} / {contract['capacity'] if contract['capacity'] else '-'}", "size": "xs", "color": "#212529", "align": "end", "wrap": True}
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "xs",
+                        "contents": [
+                            {"type": "text", "text": "วันที่ทำสัญญา", "size": "xs", "color": "#6c757d"},
+                            {"type": "text", "text": f"{created_at_str}", "size": "xs", "color": "#212529", "align": "end"}
+                        ]
+                    }
+                ]
+            },
+            {"type": "separator"},
+            {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "xs",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": "ยอดจัดผ่อนรวม", "size": "sm", "color": "#6c757d"},
+                            {"type": "text", "text": f"฿{float(contract['total_amount']):,.2f}", "size": "sm", "color": "#212529", "weight": "bold", "align": "end"}
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": "ความคืบหน้าการผ่อน", "size": "sm", "color": "#6c757d"},
+                            {"type": "text", "text": f"{paid_count}/{contract['total_installments']} งวด", "size": "sm", "color": "#0d6efd", "weight": "bold", "align": "end"}
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": "ยอดผ่อนต่องวด", "size": "sm", "color": "#6c757d"},
+                            {"type": "text", "text": f"฿{float(contract['installment_amount']):,.2f}", "size": "sm", "color": "#212529", "weight": "bold", "align": "end"}
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#e7f1ff" if not is_closed else "#d1e7dd",
+                "cornerRadius": "md",
+                "paddingAll": "md",
+                "margin": "xs",
+                "contents": [
+                    {"type": "text", "text": "กำหนดชำระงวดถัดไป", "size": "xs", "color": "#0d6efd" if not is_closed else "#0f5132"},
+                    {"type": "text", "text": f"{due_date_str}", "size": "sm", "weight": "bold", "color": "#0a58ca" if not is_closed else "#0f5132", "margin": "xs", "wrap": True}
+                ]
+            }
+        ]
+
+        # เพิ่มการแสดงหลักฐานสัญญาหากมีการเพิ่มหลักฐานสัญญาจากหลังบ้านเข้ามา
+        if contract.get('evidence_file'):
+            evidence_url = f"{request.host_url.rstrip('/')}/static/uploads/{contract['evidence_file']}"
+            body_contents.append({
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#f8f9fa",
+                "cornerRadius": "md",
+                "paddingAll": "md",
+                "margin": "md",
+                "contents": [
+                    {"type": "text", "text": "📎 หลักฐานสัญญา", "size": "xs", "color": "#6c757d", "weight": "bold"},
+                    {
+                        "type": "button",
+                        "style": "link",
+                        "height": "sm",
+                        "action": {
+                            "type": "uri",
+                            "label": "🖼️ คลิกเพื่อดูหลักฐานสัญญา",
+                            "uri": evidence_url
+                        }
+                    }
+                ]
+            })
+
         flex_contents = {
             "type": "bubble",
             "size": "mega",
@@ -730,122 +884,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                 "layout": "vertical",
                 "spacing": "md",
                 "paddingAll": "xl",
-                "contents": [
-                    {
-                        "type": "box",
-                        "layout": "vertical",
-                        "backgroundColor": "#f8f9fa",
-                        "cornerRadius": "md",
-                        "paddingAll": "md",
-                        "contents": [
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "contents": [
-                                    {"type": "text", "text": "ผู้เช่าซื้อ", "size": "xs", "color": "#6c757d"},
-                                    {"type": "text", "text": f"{contract['customer_name']}", "size": "xs", "color": "#212529", "weight": "bold", "align": "end", "wrap": True}
-                                ]
-                            },
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "margin": "xs",
-                                "contents": [
-                                    {"type": "text", "text": "เบอร์โทรศัพท์", "size": "xs", "color": "#6c757d"},
-                                    {"type": "text", "text": f"{contract['phone'] if contract['phone'] else '-'}", "size": "xs", "color": "#212529", "align": "end"}
-                                ]
-                            },
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "margin": "xs",
-                                "contents": [
-                                    {"type": "text", "text": "เลขบัตรประชาชน", "size": "xs", "color": "#6c757d"},
-                                    {"type": "text", "text": f"{contract['id_card'] if contract['id_card'] else '-'}", "size": "xs", "color": "#212529", "align": "end"}
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        "type": "box",
-                        "layout": "vertical",
-                        "backgroundColor": "#f8f9fa",
-                        "cornerRadius": "md",
-                        "paddingAll": "md",
-                        "contents": [
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "contents": [
-                                    {"type": "text", "text": "IMEI / Serial", "size": "xs", "color": "#6c757d"},
-                                    {"type": "text", "text": f"{contract['imei'] if contract['imei'] else (contract['serial_number'] if contract['serial_number'] else '-')}", "size": "xs", "color": "#212529", "align": "end", "wrap": True}
-                                ]
-                            },
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "margin": "xs",
-                                "contents": [
-                                    {"type": "text", "text": "สเปกเครื่อง", "size": "xs", "color": "#6c757d"},
-                                    {"type": "text", "text": f"{contract['color'] if contract['color'] else '-'} / {contract['capacity'] if contract['capacity'] else '-'}", "size": "xs", "color": "#212529", "align": "end", "wrap": True}
-                                ]
-                            },
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "margin": "xs",
-                                "contents": [
-                                    {"type": "text", "text": "วันที่ทำสัญญา", "size": "xs", "color": "#6c757d"},
-                                    {"type": "text", "text": f"{created_at_str}", "size": "xs", "color": "#212529", "align": "end"}
-                                ]
-                            }
-                        ]
-                    },
-                    {"type": "separator"},
-                    {
-                        "type": "box",
-                        "layout": "vertical",
-                        "spacing": "xs",
-                        "contents": [
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "contents": [
-                                    {"type": "text", "text": "ยอดจัดผ่อนรวม", "size": "sm", "color": "#6c757d"},
-                                    {"type": "text", "text": f"฿{float(contract['total_amount']):,.2f}", "size": "sm", "color": "#212529", "weight": "bold", "align": "end"}
-                                ]
-                            },
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "contents": [
-                                    {"type": "text", "text": "ความคืบหน้าการผ่อน", "size": "sm", "color": "#6c757d"},
-                                    {"type": "text", "text": f"{paid_count}/{contract['total_installments']} งวด", "size": "sm", "color": "#0d6efd", "weight": "bold", "align": "end"}
-                                ]
-                            },
-                            {
-                                "type": "box",
-                                "layout": "horizontal",
-                                "contents": [
-                                    {"type": "text", "text": "ยอดผ่อนต่องวด", "size": "sm", "color": "#6c757d"},
-                                    {"type": "text", "text": f"฿{float(contract['installment_amount']):,.2f}", "size": "sm", "color": "#212529", "weight": "bold", "align": "end"}
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        "type": "box",
-                        "layout": "vertical",
-                        "backgroundColor": "#e7f1ff" if not is_closed else "#d1e7dd",
-                        "cornerRadius": "md",
-                        "paddingAll": "md",
-                        "margin": "xs",
-                        "contents": [
-                            {"type": "text", "text": "กำหนดชำระงวดถัดไป", "size": "xs", "color": "#0d6efd" if not is_closed else "#0f5132"},
-                            {"type": "text", "text": f"{due_date_str}", "size": "sm", "weight": "bold", "color": "#0a58ca" if not is_closed else "#0f5132", "margin": "xs", "wrap": True}
-                        ]
-                    }
-                ]
+                "contents": body_contents
             },
             "footer": {
                 "type": "box",
