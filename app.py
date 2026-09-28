@@ -675,7 +675,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                 footer_contents.append({
                     "type": "button",
                     "style": "primary",
-                    "color": "#0d6efd",
+                    "color": "#ad2d2d",
                     "action": {
                         "type": "message",
                         "label": f"ชำระงวดที่ {next_inst_no} ({pay_amount:,.2f} บาท)",
@@ -685,7 +685,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                 footer_contents.append({
                     "type": "button",
                     "style": "secondary",
-                    "color": "#6c757d",
+                    "color": "#5e0b0b",
                     "action": {
                         "type": "message",
                         "label": "ปิดยอดก่อนกำหนด (ส่วนลด 15%)",
