@@ -115,8 +115,15 @@ def send_push_thank_you(user_id, contract_number, product_name):
         print(f"Error sending thank you message to {user_id}: {e}")
 
 def send_push_cancellation(user_id, contract_number, product_name, contract_status="active"):
-    # ยกเลิกการส่งการแจ้งเตือนไปยังลูกค้าเมื่อมีการลบสัญญาในหลังบ้าน
-    pass
+    """ แก้ไข: ส่งข้อความแจ้งเตือนเมื่อสัญญาถูกลบในระบบหลังบ้านไปยัง LINE ลูกค้า """
+    if not user_id:
+        return
+    try:
+        body_text = f"สัญญาเลขที่ {contract_number} ({product_name}) ของท่านได้รับการยกเลิก/ลบออกจากระบบหลังบ้านเรียบร้อยแล้ว หากมีข้อสงสัยเพิ่มเติมโปรดติดต่อเจ้าหน้าที่ครับ 🙏"
+        flex_msg = build_flex_message_ui("🗑️ แจ้งเตือนการลบสัญญา", body_text, contract_number, product_name, color="#dc3545")
+        line_bot_api.push_message(user_id, flex_msg)
+    except Exception as e:
+        print(f"Error sending cancellation message to {user_id}: {e}")
 
 def send_push_contract_updated(user_id, contract_number, product_name, updated_fields_text):
     if not user_id:
@@ -497,8 +504,17 @@ def process_contract_detail_api(contract_id):
             return jsonify({'message': 'แก้ไขสัญญาและจัดการหลักฐานสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
+            # แก้ไข: ส่งแจ้งเตือนการลบสัญญาเข้า LINE ของลูกค้าก่อนจะลบสัญญาออกจากฐานข้อมูล
+            line_user_id = contract.get('line_user_id')
+            contract_number = contract.get('contract_number', '')
+            product_name = contract.get('product_name', '')
+            
             cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
             conn.commit()
+
+            if line_user_id:
+                send_push_cancellation(line_user_id, contract_number, product_name, contract.get('status'))
+
             return jsonify({'message': 'ลบสัญญาสำเร็จเรียบร้อยแล้ว', 'contract_id': contract_id})
 
         c_dict = dict(contract)
@@ -538,6 +554,65 @@ def process_contract_detail_api(contract_id):
 @admin_bp.route('/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
 def get_contract_detail_api(contract_id):
     return process_contract_detail_api(contract_id)
+
+@admin_bp.route('/contract_document/<int:contract_id>', methods=['GET'])
+def get_contract_document(contract_id):
+    """ แก้ไข: Route เปิดดูเอกสารหนังสือสัญญาในระบบหลังบ้าน """
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database error: {str(e)}", 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+        if not contract:
+            return "ไม่พบสัญญาที่ระบุ", 404
+        
+        c_dict = dict(contract)
+        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
+        c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
+        c_dict['monthly_amount'] = c_dict['installment_amount']
+        
+        if c_dict.get('created_at'):
+            c_dict['created_at'] = str(c_dict['created_at'])
+
+        return render_template('contract_document.html', c=c_dict)
+    except Exception as e:
+        return f"Error loading contract document: {str(e)}", 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/bill/<int:payment_id>', methods=['GET'])
+def get_bill_document(payment_id):
+    """ Route เปิดดูใบเสร็จรับเงินในระบบหลังบ้าน """
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database error: {str(e)}", 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT p.*, c.customer_name, c.phone, c.contract_number, c.product_name, c.total_installments
+            FROM payments p
+            JOIN contracts c ON p.contract_id = c.id
+            WHERE p.id = %s
+        """, (payment_id,))
+        payment = cursor.fetchone()
+        if not payment:
+            return "ไม่พบข้อมูลบิลชำระเงิน", 404
+
+        p_dict = dict(payment)
+        p_dict['amount'] = float(p_dict['amount']) if p_dict['amount'] is not None else 0.0
+        return render_template('bill.html', p=p_dict)
+    except Exception as e:
+        return f"Error loading bill document: {str(e)}", 500
+    finally:
+        cursor.close()
+        conn.close()
 
 def process_payments_by_contract_api(contract_identifier):
     try:

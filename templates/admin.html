@@ -166,6 +166,38 @@
             </div>
         </div>
 
+        <!-- Section: Early Closed Bills Alert Box (เพิ่มใหม่: UI แจ้งเตือนบิลที่ปิดยอดก่อนกำหนด) -->
+        <div class="row g-4 mb-4" id="earlyClosedAlertContainer" style="display: none;">
+            <div class="col-12">
+                <div class="card card-custom p-4 bg-white border-start border-info border-5 shadow-sm">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-info mb-0">
+                            <i class="fa-solid fa-bolt me-2"></i>รายการสัญญาที่ขอปิดยอด / ชำระปิดยอดก่อนกำหนด
+                        </h5>
+                        <span class="badge bg-info text-dark rounded-pill" id="earlyClosedBillsBadge">0 รายการ</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr class="small text-muted">
+                                    <th>สัญญา/ลูกค้า</th>
+                                    <th>เบอร์โทร</th>
+                                    <th>สินค้า</th>
+                                    <th>จำนวนงวดที่ผ่อนแล้ว</th>
+                                    <th>ยอดรวมปิดสัญญา</th>
+                                    <th>สถานะการตรวจสอบ</th>
+                                    <th class="text-center">ดำเนินการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="earlyClosedBillsTableBody">
+                                <!-- Data rendered via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Section: Reclaim & Overdue 2 Notice Box -->
         <div class="row g-4 mb-4" id="reclaimAlertContainer" style="display: none;">
             <div class="col-12">
@@ -600,6 +632,10 @@
                 reclaimTbody.innerHTML = '';
                 let reclaimCount = 0;
 
+                const earlyClosedTbody = document.getElementById('earlyClosedBillsTableBody');
+                earlyClosedTbody.innerHTML = '';
+                let earlyClosedCount = 0;
+
                 contracts.forEach(c => {
                     if (c.status === 'active' || c.status === 'overdue_1') activeContracts++;
                     if (c.status === 'overdue_2') overdue2Contracts++;
@@ -636,6 +672,28 @@
                             `;
                             unpaidTbody.appendChild(unpaidTr);
                         }
+                    }
+
+                    // แสดงรายการบิลที่ลูกค้ากดหรือพิมพ์ปิดยอดก่อนกำหนด (closed_early)
+                    if (c.status === 'closed_early') {
+                        earlyClosedCount++;
+                        const earlyTr = document.createElement('tr');
+                        earlyTr.innerHTML = `
+                            <td>
+                                <div class="fw-bold text-primary">${c.customer_name}</div>
+                                <small class="text-muted">สัญญา: ${c.contract_number}</small>
+                            </td>
+                            <td>${c.phone || '-'}</td>
+                            <td>${c.product_name}</td>
+                            <td><span class="badge bg-success">${c.paid_count}/${c.total_installments} งวด</span></td>
+                            <td class="fw-bold text-success">฿${(c.close_with_discount || 0).toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
+                            <td><span class="badge badge-status-closed"><i class="fa-solid fa-bolt me-1"></i>ปิดยอดก่อนกำหนดแล้ว</span></td>
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-outline-secondary me-1" onclick="viewHistory(${c.id}, '${c.contract_number}')"><i class="fa-solid fa-history me-1"></i>ประวัติบิล</button>
+                                <a href="/admin/contract_document/${c.id}" target="_blank" class="btn btn-sm btn-outline-dark"><i class="fa-solid fa-file-lines me-1"></i>ดูสัญญา</a>
+                            </td>
+                        `;
+                        earlyClosedTbody.appendChild(earlyTr);
                     }
 
                     if (c.status === 'overdue_2' || c.status === 'reclaim') {
@@ -716,6 +774,13 @@
 
                 document.getElementById('unpaidBillsBadge').innerText = unpaidCount + ' รายการ';
                 document.getElementById('reclaimBillsBadge').innerText = reclaimCount + ' รายการ';
+                document.getElementById('earlyClosedBillsBadge').innerText = earlyClosedCount + ' รายการ';
+
+                if (earlyClosedCount > 0) {
+                    document.getElementById('earlyClosedAlertContainer').style.display = 'block';
+                } else {
+                    document.getElementById('earlyClosedAlertContainer').style.display = 'none';
+                }
 
                 if (reclaimCount > 0) {
                     document.getElementById('reclaimAlertContainer').style.display = 'block';
