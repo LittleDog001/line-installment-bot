@@ -154,7 +154,7 @@ def root_api_contract_detail(contract_id):
                     f"-------------------------------\n"
                     f"📦 สินค้า: {contract['product_name']}\n"
                     f"เลขที่สัญญา: {contract['contract_number']}\n\n"
-                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบจากร้าน** เรียบร้อยแล้วครับ"
+                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบ** เรียบร้อยแล้วครับ 🙏"
                 )
                 send_simple_push_notification(contract['line_user_id'], cancel_msg)
             cursor.close()
@@ -675,7 +675,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                 footer_contents.append({
                     "type": "button",
                     "style": "primary",
-                    "color": "#ad2d2d",
+                    "color": "#0d6efd",
                     "action": {
                         "type": "message",
                         "label": f"ชำระงวดที่ {next_inst_no} ({pay_amount:,.2f} บาท)",
@@ -685,7 +685,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                 footer_contents.append({
                     "type": "button",
                     "style": "secondary",
-                    "color": "#5e0b0b",
+                    "color": "#6c757d",
                     "action": {
                         "type": "message",
                         "label": "ปิดยอดก่อนกำหนด (ส่วนลด 15%)",
@@ -709,7 +709,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
             "header": {
                 "type": "box",
                 "layout": "vertical",
-                "backgroundColor": "#c90404",
+                "backgroundColor": "#0d6efd",
                 "paddingAll": "xl",
                 "contents": [
                     {
