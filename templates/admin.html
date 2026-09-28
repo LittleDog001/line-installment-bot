@@ -284,7 +284,7 @@
                             <input type="text" id="product_name" class="form-control" placeholder="เช่น iPhone 15 Pro Max" required>
                         </div>
 
-                        <!-- เพิ่มช่องกรอก IMEI, Serial Number, สี, ความจุหน่วยความจำ -->
+                        <!-- IMEI, Serial Number, สี, ความจุหน่วยความจำ -->
                         <div class="row g-2 mb-2">
                             <div class="col-6">
                                 <label class="form-label small text-muted">หมายเลขเครื่อง (IMEI)</label>
@@ -306,7 +306,7 @@
                             </div>
                         </div>
 
-                        <!-- เพิ่มระบบอัปโหลดหลักฐานการทำสัญญา -->
+                        <!-- ระบบอัปโหลดหลักฐานการทำสัญญา -->
                         <div class="mb-2">
                             <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>หลักฐานการทำสัญญา (ไม่ใส่ก่อนได้)</label>
                             <input type="file" id="evidence_file" class="form-control" accept="image/*,.pdf">
@@ -573,7 +573,6 @@
                         totalPaid += instAmt;
                     }
 
-                    // คำนวณวันกำหนดชำระของงวด
                     const dueDate = getInstallmentDueDateJS(c.created_at, c.due_day || 5, p.installment_no);
                     if (dueDate.getMonth() + 1 === currentMonth && dueDate.getFullYear() === currentYear) {
                         dueThisMonthCount++;
@@ -606,8 +605,8 @@
             let year = createdDate.getFullYear();
             let month = createdDate.getMonth(); // 0-based
 
-            // แก้ไข: ปรับการคำนวณงวดแรกไม่ให้บวกเดือนเพิ่ม เพื่อให้ตรงกับหลังบ้าน
-            let targetMonthIndex = month + (installmentNo - 1);
+            // แก้ไข: ปรับการคำนวณงวดแรกให้เป็นเดือนถัดไปทันทีให้ตรงกับหลังบ้าน
+            let targetMonthIndex = month + installmentNo;
             let targetYear = year + Math.floor(targetMonthIndex / 12);
             let targetMonth = targetMonthIndex % 12;
 
@@ -715,8 +714,9 @@
                         <td class="fw-bold text-danger">฿${amount.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
                         <td class="fw-bold text-primary">${formattedDueDate}</td>
                         <td class="text-center">
+                            <!-- เพิ่มระบบปุ่มอนุมัติ/รับชำระเงินแต่ละงวดในหลังบ้านตรงนี้ -->
                             <button class="btn btn-sm btn-success fw-bold" onclick="paySpecificInstallment(${c.id}, ${nextP.installment_no})">
-                                <i class="fa-solid fa-check me-1"></i>รับชำระ
+                                <i class="fa-solid fa-check me-1"></i>อนุมัติรับชำระ
                             </button>
                         </td>
                     `;
@@ -761,7 +761,6 @@
                                 <button class="btn btn-sm btn-info text-white fw-bold me-1" onclick="closeEarlyContractDirect(${c.id})">
                                     <i class="fa-solid fa-check me-1"></i>อนุมัติปิดยอด
                                 </button>
-                                <!-- เพิ่มปุ่มไม่อนุมัติปิดยอดข้างๆ ปุ่มอนุมัติ -->
                                 <button class="btn btn-sm btn-outline-danger fw-bold me-1" onclick="rejectEarlyClose(${c.id})">
                                     <i class="fa-solid fa-xmark me-1"></i>ไม่อนุมัติ
                                 </button>
@@ -865,7 +864,7 @@
                     loadContractsData();
                 } else {
                     const errText = await res.text();
-                    alert(" เกิดข้อผิดพลาด: " + errText);
+                    alert("เกิดข้อผิดพลาด: " + errText);
                 }
             } catch (err) {
                 alert("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
@@ -946,6 +945,7 @@
         }
 
         async function paySpecificInstallment(contractId, installmentNo) {
+            if (!confirm(`ยืนยันการอนุมัติรับชำระเงินงวดที่ ${installmentNo} ใช่หรือไม่?`)) return;
             try {
                 const res = await fetch(`/admin/api/contracts/${contractId}/pay`, {
                     method: "POST",

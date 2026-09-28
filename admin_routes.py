@@ -94,7 +94,7 @@ def get_installment_due_date(created_at, due_day, installment_no):
     start_year = created_at.year
     start_month = created_at.month
     
-    # แก้ไข: คำนวณงวดที่ 1 ให้เป็นเดือนถัดไปจากเดือนที่ทำสัญญาจริงทันที
+    # แก้ไข: คำนวณงวดที่ 1 ให้เป็นเดือนถัดไปจากเดือนที่ทำสัญญาจริงทันที (งวดแรกเป็นเดือนถัดไป)
     target_month_index = (start_month - 1) + installment_no
     target_year = start_year + (target_month_index // 12)
     target_month = (target_month_index % 12) + 1
@@ -135,7 +135,7 @@ def send_push_contract_updated(user_id, contract_number, product_name, updated_f
         print(f"Error sending contract update message to {user_id}: {e}")
 
 def send_push_payment_notification(user_id, contract_number, product_name, installment_no, amount, paid_at):
-    """ เพิ่มระบบแจ้งเตือนเวลาลูกค้าชำระเงินเป็นรายงวดเข้า LINE ของลูกค้า """
+    """ แจ้งเตือนเวลาลูกค้าชำระเงินเป็นรายงวดเข้า LINE ของลูกค้า """
     if not user_id:
         return
     try:
