@@ -867,7 +867,7 @@ def reject_early_close_api(contract_id):
 
         line_user_id = contract.get('line_user_id')
         if line_user_id:
-            reject_msg = "การขอปิดยอดก่อนกำหนดของคุณไม่ได้รับการอนุมัติ หากมีข้อสงสัยกรุณาติดต่อเจ้าหน้าที่ครับ"
+            reject_msg = "ไม่ตรวจพบการแจ้งเตือนชำระเงินเข้าตามจำนวนเงินในการปิดยอด"
             flex_msg = build_flex_message_ui("❌ ไม่อนุมัติการขอปิดยอด", reject_msg, contract.get('contract_number'), contract.get('product_name'), color="#dc3545")
             try:
                 line_bot_api.push_message(line_user_id, flex_msg)
