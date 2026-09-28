@@ -697,6 +697,7 @@
                         </td>
                         <td class="text-center">
                             <div class="btn-group action-btn-group">
+                                <a href="/admin/contract_document/${c.id}" target="_blank" class="btn btn-sm btn-outline-dark" title="ดูสัญญา"><i class="fa-solid fa-file-lines"></i> ดูสัญญา</a>
                                 <button class="btn btn-sm btn-outline-primary" onclick="openLineNotifyModal(${c.id}, '${c.customer_name}', '${c.contract_number}')" title="ส่ง LINE"><i class="fa-brands fa-line"></i></button>
                                 <button class="btn btn-sm btn-outline-secondary" onclick="viewHistory(${c.id}, '${c.contract_number}')" title="ประวัติการชำระ"><i class="fa-solid fa-history"></i></button>
                                 <button class="btn btn-sm btn-outline-warning" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
