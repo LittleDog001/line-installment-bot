@@ -3,6 +3,7 @@ import datetime
 import calendar
 import psycopg2
 import werkzeug
+import random
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
@@ -14,6 +15,18 @@ TH_TZ = ZoneInfo('Asia/Bangkok')
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+
+def generate_short_contract_number(cursor):
+    """สร้างเลขสัญญาแบบสั้น เช่น C-260928-101"""
+    now = datetime.datetime.now(TH_TZ)
+    prefix = f"C-{now.strftime('%y%m%d')}"
+    for _ in range(100):
+        rand_num = random.randint(100, 999)
+        candidate = f"{prefix}-{rand_num}"
+        cursor.execute("SELECT id FROM contracts WHERE contract_number = %s", (candidate,))
+        if not cursor.fetchone():
+            return candidate
+    return f"{prefix}-{now.strftime('%H%M%S')}"
 
 def get_installment_due_date(created_at, due_day, installment_no):
     if isinstance(created_at, str):
@@ -222,7 +235,7 @@ def create_contract():
         if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
             return "กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง", 400
 
-        contract_number = f"C{now_time.strftime('%y%m%d%H%M%S')}"
+        contract_number = generate_short_contract_number(cursor)
 
         evidence_filename = None
         evidence_file = request.files.get('evidence_file')
@@ -304,7 +317,7 @@ def process_contracts_api():
             if total_installments <= 0 or total_amount <= 0 or installment_amount <= 0:
                 return jsonify({'error': 'กรุณากรอกยอดเงินรวม/ยอดต่องวด และจำนวนงวดให้ถูกต้อง'}), 400
 
-            contract_number = f"C{now_time.strftime('%y%m%d%H%M%S')}"
+            contract_number = generate_short_contract_number(cursor)
 
             evidence_filename = None
             evidence_file = request.files.get('evidence_file') if request.files else None
@@ -338,7 +351,7 @@ def process_contracts_api():
                 """, (contract_id, i, installment_amount))
 
             conn.commit()
-            return jsonify({'message': 'บันทึกสัญญาสำเร็จ', 'contract_id': contract_id}), 201
+            return jsonify({'message': 'บันทึกสัญญาสำเร็จ', 'contract_id': contract_id, 'contract_number': contract_number}), 201
 
         cursor.execute("SELECT * FROM contracts ORDER BY id DESC")
         contracts = cursor.fetchall()

@@ -19,8 +19,11 @@
         .card-stat:hover { transform: translateY(-3px); }
         .table-hover tbody tr:hover { background-color: rgba(13, 110, 253, 0.03); }
         .badge-status-active { background-color: #d1e7dd; color: #0f5132; }
+        .badge-status-overdue1 { background-color: #fff3cd; color: #664d03; }
+        .badge-status-overdue2 { background-color: #ffe69c; color: #842029; }
+        .badge-status-reclaim { background-color: #f8d7da; color: #842029; font-weight: bold; }
         .badge-status-closed { background-color: #cfe2ff; color: #084298; }
-        .badge-status-cancelled { background-color: #f8d7da; color: #842029; }
+        .badge-status-cancelled { background-color: #e2e3e5; color: #41464b; }
         .action-btn-group .btn { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
     </style>
 </head>
@@ -38,8 +41,8 @@
 
     <div class="container-fluid px-4">
 
-        <!-- Stat Cards Summary -->
-        <div class="row g-3 mb-4">
+        <!-- Stat Cards Summary Row 1 -->
+        <div class="row g-3 mb-3">
             <div class="col-md-2-4 col-sm-6 col-12">
                 <div class="card card-custom card-stat p-3 bg-white">
                     <div class="d-flex align-items-center justify-content-between">
@@ -67,14 +70,27 @@
                 </div>
             </div>
             <div class="col-md-2-4 col-sm-6 col-12">
-                <div class="card card-custom card-stat p-3 bg-white">
+                <div class="card card-custom card-stat p-3 bg-white border-start border-warning border-4">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
-                            <span class="text-muted small">ยอดรวมรับชำระแล้ว</span>
-                            <h3 class="fw-bold mb-0 text-dark" id="statTotalPaid">฿0</h3>
+                            <span class="text-muted small">ค้างชำระ 2 ครั้ง</span>
+                            <h3 class="fw-bold mb-0 text-warning" id="statOverdue2Contracts">0</h3>
                         </div>
                         <div class="bg-warning-subtle text-warning p-3 rounded-circle">
-                            <i class="fa-solid fa-wallet fa-xl"></i>
+                            <i class="fa-solid fa-triangle-exclamation fa-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2-4 col-sm-6 col-12">
+                <div class="card card-custom card-stat p-3 bg-white border-start border-danger border-4">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-muted small">เรียกเครื่องคืน (ค้าง 3+)</span>
+                            <h3 class="fw-bold mb-0 text-danger" id="statReclaimContracts">0</h3>
+                        </div>
+                        <div class="bg-danger-subtle text-danger p-3 rounded-circle">
+                            <i class="fa-solid fa-handcuffs fa-xl"></i>
                         </div>
                     </div>
                 </div>
@@ -83,7 +99,24 @@
                 <div class="card card-custom card-stat p-3 bg-white">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
-                            <span class="text-muted small">บิลต้องชำระเดือนนี้</span>
+                            <span class="text-muted small">ยอดรวมรับชำระสะสม</span>
+                            <h3 class="fw-bold mb-0 text-dark" id="statTotalPaid">฿0</h3>
+                        </div>
+                        <div class="bg-secondary-subtle text-secondary p-3 rounded-circle">
+                            <i class="fa-solid fa-wallet fa-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stat Cards Summary Row 2: Monthly Financial Stats -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-3 col-sm-6 col-12">
+                <div class="card card-custom card-stat p-3 bg-white border-start border-info border-4">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-muted small">บิลต้องชำระเดือนนี้ (รายการ)</span>
                             <h3 class="fw-bold mb-0 text-info" id="statDueThisMonth">0</h3>
                         </div>
                         <div class="bg-info-subtle text-info p-3 rounded-circle">
@@ -92,11 +125,11 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-2-4 col-sm-6 col-12">
-                <div class="card card-custom card-stat p-3 bg-white">
+            <div class="col-md-3 col-sm-6 col-12">
+                <div class="card card-custom card-stat p-3 bg-white border-start border-success border-4">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
-                            <span class="text-muted small">บิลชำระแล้วเดือนนี้</span>
+                            <span class="text-muted small">บิลชำระแล้วเดือนนี้ (รายการ)</span>
                             <h3 class="fw-bold mb-0 text-success" id="statPaidThisMonth">0</h3>
                         </div>
                         <div class="bg-success-subtle text-success p-3 rounded-circle">
@@ -105,17 +138,74 @@
                     </div>
                 </div>
             </div>
+            <div class="col-md-3 col-sm-6 col-12">
+                <div class="card card-custom card-stat p-3 bg-white border-start border-primary border-4">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-muted small">ยอดคาดการณ์ที่ต้องรับเดือนนี้</span>
+                            <h3 class="fw-bold mb-0 text-primary" id="statDueAmountThisMonth">฿0.00</h3>
+                        </div>
+                        <div class="bg-primary-subtle text-primary p-3 rounded-circle">
+                            <i class="fa-solid fa-file-invoice-dollar fa-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6 col-12">
+                <div class="card card-custom card-stat p-3 bg-white border-start border-success border-4">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="text-muted small">ยอดที่รับเงินแล้วในเดือนนี้</span>
+                            <h3 class="fw-bold mb-0 text-success" id="statPaidAmountThisMonth">฿0.00</h3>
+                        </div>
+                        <div class="bg-success-subtle text-success p-3 rounded-circle">
+                            <i class="fa-solid fa-hand-holding-dollar fa-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section: Reclaim & Overdue 2 Notice Box -->
+        <div class="row g-4 mb-4" id="reclaimAlertContainer" style="display: none;">
+            <div class="col-12">
+                <div class="card card-custom p-4 bg-white border-start border-danger border-5 shadow-sm">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-danger mb-0">
+                            <i class="fa-solid fa-triangle-exclamation me-2"></i>รายการสัญญา ค้างชำระ 2 ครั้ง และ เรียกเครื่องคืน
+                        </h5>
+                        <span class="badge bg-danger rounded-pill" id="reclaimBillsBadge">0 รายการ</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr class="small text-muted">
+                                    <th>สัญญา/ลูกค้า</th>
+                                    <th>เบอร์โทร</th>
+                                    <th>สินค้า</th>
+                                    <th>จำนวนงวดค้าง</th>
+                                    <th>สถานะการติดตาม</th>
+                                    <th class="text-center">ดำเนินการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="reclaimBillsTableBody">
+                                <!-- Data rendered via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Section: Unpaid & Overdue Monthly Bills -->
         <div class="row g-4 mb-4">
             <div class="col-12">
-                <div class="card card-custom p-4 bg-white border-start border-danger border-4">
+                <div class="card card-custom p-4 bg-white border-start border-warning border-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="fw-bold text-danger mb-0">
-                            <i class="fa-solid fa-triangle-exclamation me-2"></i>รายการบิลที่ค้างชำระ / ยังไม่ได้ชำระ
+                        <h5 class="fw-bold text-warning-emphasis mb-0">
+                            <i class="fa-solid fa-clock me-2"></i>รายการบิลที่ค้างชำระ / ยังไม่ได้ชำระ
                         </h5>
-                        <span class="badge bg-danger rounded-pill" id="unpaidBillsBadge">0 รายการ</span>
+                        <span class="badge bg-warning text-dark rounded-pill" id="unpaidBillsBadge">0 รายการ</span>
                     </div>
                     <div class="table-responsive">
                         <table class="table table-hover align-middle mb-0">
@@ -184,7 +274,7 @@
                             </div>
                         </div>
 
-                        <!-- เพิ่มระบบอัปโหลดหลักฐานการทำสัญญา (สามารถเลือกไม่ใส่ก่อนได้) -->
+                        <!-- เพิ่มระบบอัปโหลดหลักฐานการทำสัญญา -->
                         <div class="mb-2">
                             <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>หลักฐานการทำสัญญา (ไม่ใส่ก่อนได้)</label>
                             <input type="file" id="evidence_file" class="form-control" accept="image/*,.pdf">
@@ -476,16 +566,25 @@
                 const contracts = await res.json();
                 const tbody = document.getElementById('contractsTableBody');
                 const unpaidTbody = document.getElementById('unpaidBillsTableBody');
+                const reclaimTbody = document.getElementById('reclaimBillsTableBody');
                 
                 tbody.innerHTML = '';
                 unpaidTbody.innerHTML = '';
+                reclaimTbody.innerHTML = '';
 
                 let totalContracts = contracts.length;
                 let activeContracts = 0;
+                let overdue2Contracts = 0;
+                let reclaimContracts = 0;
                 let totalPaid = 0;
+
                 let dueThisMonthCount = 0;
                 let paidThisMonthCount = 0;
+                let dueAmountThisMonth = 0;
+                let paidAmountThisMonth = 0;
+
                 let unpaidBillsList = [];
+                let reclaimBillsList = [];
 
                 const now = new Date();
                 const currentMonth = now.getMonth();
@@ -493,11 +592,34 @@
 
                 contracts.forEach(c => {
                     const statusStr = (c.status || 'active').toLowerCase();
-                    const isStatusActive = (statusStr === 'active');
                     const isClosed = (statusStr === 'closed' || statusStr === 'closed_early');
-                    
-                    if (isStatusActive) activeContracts++;
-                    
+                    const isCancelled = (statusStr === 'cancelled');
+
+                    const overdueCount = c.overdue_count || 0;
+                    if (!isClosed && !isCancelled) {
+                        if (statusStr === 'reclaim' || overdueCount >= 3) {
+                            reclaimContracts++;
+                        } else if (statusStr === 'overdue_2' || overdueCount === 2) {
+                            overdue2Contracts++;
+                        } else if (statusStr === 'active' || statusStr === 'overdue_1') {
+                            activeContracts++;
+                        }
+                    }
+
+                    if (statusStr === 'reclaim' || overdueCount >= 2) {
+                        if (!isClosed && !isCancelled) {
+                            reclaimBillsList.push({
+                                contract_id: c.id,
+                                contract_number: c.contract_number,
+                                customer_name: c.customer_name,
+                                phone: c.phone || '-',
+                                product_name: c.product_name || '-',
+                                overdue_count: overdueCount,
+                                status: statusStr
+                            });
+                        }
+                    }
+
                     const paidCount = c.paid_count !== undefined ? c.paid_count : (c.paid_installments || 0);
                     const totalInstallments = Number(c.total_installments || 0);
                     const installmentAmount = Number(c.installment_amount || 0);
@@ -514,26 +636,27 @@
 
                     totalPaid += (paidCount * installmentAmount);
 
-                    if (isStatusActive) {
-                        dueThisMonthCount++;
-                        
-                        let hasPaidThisMonth = false;
-                        if (c.payments && Array.isArray(c.payments)) {
-                            hasPaidThisMonth = c.payments.some(p => {
-                                if (p.status === 'paid' && p.paid_at) {
-                                    const pDate = new Date(p.paid_at);
-                                    return pDate.getMonth() === currentMonth && pDate.getFullYear() === currentYear;
+                    if (c.payments && Array.isArray(c.payments)) {
+                        c.payments.forEach(p => {
+                            if (p.paid_at) {
+                                const pDate = new Date(p.paid_at);
+                                if (pDate.getMonth() === currentMonth && pDate.getFullYear() === currentYear) {
+                                    paidAmountThisMonth += Number(p.amount || installmentAmount);
                                 }
-                                return false;
-                            });
-                        }
+                            }
 
-                        if (hasPaidThisMonth) {
-                            paidThisMonthCount++;
-                        }
+                            let targetDate = getDueDate(c.created_at, dueDay, p.installment_no);
+                            if (targetDate.getMonth() === currentMonth && targetDate.getFullYear() === currentYear) {
+                                dueThisMonthCount++;
+                                dueAmountThisMonth += Number(p.amount || installmentAmount);
+                                if (p.status === 'paid') {
+                                    paidThisMonthCount++;
+                                }
+                            }
+                        });
                     }
 
-                    if (isStatusActive && c.payments && Array.isArray(c.payments)) {
+                    if (!isClosed && !isCancelled && c.payments && Array.isArray(c.payments)) {
                         let unpays = [];
 
                         c.payments.forEach(p => {
@@ -572,9 +695,18 @@
 
                     let statusBadgeClass = 'badge-status-cancelled';
                     let statusLabel = c.status;
-                    if (isStatusActive) {
+                    if (statusStr === 'reclaim' || overdueCount >= 3) {
+                        statusBadgeClass = 'badge-status-reclaim';
+                        statusLabel = 'เรียกคืนเครื่อง (ค้าง 3+)';
+                    } else if (statusStr === 'overdue_2' || overdueCount === 2) {
+                        statusBadgeClass = 'badge-status-overdue2';
+                        statusLabel = 'ค้างชำระ 2 ครั้ง';
+                    } else if (statusStr === 'overdue_1' || overdueCount === 1) {
+                        statusBadgeClass = 'badge-status-overdue1';
+                        statusLabel = 'ค้างชำระ 1 ครั้ง';
+                    } else if (statusStr === 'active') {
                         statusBadgeClass = 'badge-status-active';
-                        statusLabel = 'active';
+                        statusLabel = 'ปกติ (Active)';
                     } else if (isClosed) {
                         statusBadgeClass = 'badge-status-closed';
                         statusLabel = (statusStr === 'closed_early') ? 'ปิดยอดแล้ว (ส่วนลด)' : 'ปิดยอดแล้ว';
@@ -661,6 +793,31 @@
                     tbody.appendChild(tr);
                 });
 
+                if (reclaimBillsList.length > 0) {
+                    document.getElementById('reclaimAlertContainer').style.display = 'block';
+                    document.getElementById('reclaimBillsBadge').innerText = `${reclaimBillsList.length} รายการ`;
+                    reclaimBillsList.forEach(r => {
+                        const tr = document.createElement('tr');
+                        let tagClass = r.overdue_count >= 3 ? 'bg-danger text-white' : 'bg-warning text-dark';
+                        let tagLabel = r.overdue_count >= 3 ? 'เรียกคืนเครื่อง (ค้าง 3+ งวด)' : 'ค้างชำระ 2 ครั้ง';
+                        tr.innerHTML = `
+                            <td><strong class="text-primary">${r.contract_number}</strong><br><b>${r.customer_name}</b></td>
+                            <td><i class="fa-solid fa-phone me-1"></i>${r.phone}</td>
+                            <td>${r.product_name}</td>
+                            <td><span class="badge bg-danger">ค้างชำระ ${r.overdue_count} งวด</span></td>
+                            <td><span class="badge ${tagClass}">${tagLabel}</span></td>
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-success" onclick="payInstallment(${r.contract_id})">
+                                    <i class="fa-solid fa-check me-1"></i> บันทึกชำระเงิน
+                                </button>
+                            </td>
+                        `;
+                        reclaimTbody.appendChild(tr);
+                    });
+                } else {
+                    document.getElementById('reclaimAlertContainer').style.display = 'none';
+                }
+
                 if (unpaidBillsList.length === 0) {
                     unpaidTbody.innerHTML = `
                         <tr>
@@ -697,9 +854,15 @@
 
                 document.getElementById('statTotalContracts').innerText = totalContracts;
                 document.getElementById('statActiveContracts').innerText = activeContracts;
+                document.getElementById('statOverdue2Contracts').innerText = overdue2Contracts;
+                document.getElementById('statReclaimContracts').innerText = reclaimContracts;
                 document.getElementById('statTotalPaid').innerText = '฿' + totalPaid.toLocaleString('th-TH', {minimumFractionDigits: 2});
+
                 document.getElementById('statDueThisMonth').innerText = dueThisMonthCount;
                 document.getElementById('statPaidThisMonth').innerText = paidThisMonthCount;
+                document.getElementById('statDueAmountThisMonth').innerText = '฿' + dueAmountThisMonth.toLocaleString('th-TH', {minimumFractionDigits: 2});
+                document.getElementById('statPaidAmountThisMonth').innerText = '฿' + paidAmountThisMonth.toLocaleString('th-TH', {minimumFractionDigits: 2});
+
                 document.getElementById('unpaidBillsBadge').innerText = `${unpaidBillsList.length} รายการ`;
 
                 filterContracts();
