@@ -203,7 +203,7 @@
                 <div class="card card-custom p-4 bg-white border-start border-warning border-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="fw-bold text-warning-emphasis mb-0">
-                            <i class="fa-solid fa-clock me-2"></i>รายการบิลที่ค้างชำระ / ยังไม่ได้ชำระ
+                            <i class="fa-solid fa-clock me-2"></i>รายการบิลที่ค้างชำระ / ยังไม่ได้ชำระ (เฉพาะรอบถัดไป)
                         </h5>
                         <span class="badge bg-warning text-dark rounded-pill" id="unpaidBillsBadge">0 รายการ</span>
                     </div>
@@ -430,6 +430,30 @@
         </div>
     </div>
 
+    <!-- Modal: Send LINE Custom Message -->
+    <div class="modal fade" id="lineNotifyModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content card-custom">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="fw-bold text-primary"><i class="fa-brands fa-line me-2"></i>ส่งข้อความแจ้งเตือนไปที่ LINE ลูกค้า</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="notify_contract_id">
+                    <div class="mb-2">
+                        <label class="form-label small text-muted">สัญญา / ลูกค้า:</label>
+                        <div id="notify_customer_info" class="fw-bold text-dark mb-2"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">พิมพ์ข้อความแจ้งเตือนที่ต้องการส่ง:</label>
+                        <textarea id="notify_message" class="form-control" rows="4" placeholder="ระบุข้อความ เช่น แจ้งเตือนการชำระเงิน, นัดหมาย หรือสอบถามเพิ่มเติม..." required></textarea>
+                    </div>
+                    <button type="button" class="btn btn-primary w-100 fw-bold" onclick="submitLineMessage()"><i class="fa-paper-plane fa-solid me-1"></i> ส่งข้อความทันที</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <style>
         @media (min-width: 768px) {
             .col-md-2-4 {
@@ -445,10 +469,13 @@
     <script>
         let editModalObj = null;
         let historyModalObj = null;
+        let lineNotifyModalObj = null;
+        let globalContractsData = [];
 
         document.addEventListener('DOMContentLoaded', () => {
             editModalObj = new bootstrap.Modal(document.getElementById('editModal'));
             historyModalObj = new bootstrap.Modal(document.getElementById('historyModal'));
+            lineNotifyModalObj = new bootstrap.Modal(document.getElementById('lineNotifyModal'));
             loadContracts();
             toggleCalcType();
         });
@@ -525,52 +552,36 @@
             formData.append('total_amount', document.getElementById('total_amount').value);
             formData.append('total_installments', document.getElementById('total_installments').value);
             formData.append('installment_amount', document.getElementById('installment_amount').value);
-            
+
             const evidenceInput = document.getElementById('evidence_file');
             if (evidenceInput.files[0]) {
                 formData.append('evidence_file', evidenceInput.files[0]);
             }
 
-            const res = await fetch('/api/contracts', {
-                method: 'POST',
-                body: formData
-            });
-
-            if (res.ok) {
-                alert('เพิ่มสัญญาสำเร็จ');
-                document.getElementById('addContractForm').reset();
-                toggleCalcType();
-                loadContracts();
-            } else {
-                const err = await res.json();
-                alert('เกิดข้อผิดพลาด: ' + (err.error || err.message || 'ไม่สามารถเพิ่มสัญญาได้'));
+            try {
+                const res = await fetch('/admin/contract/create', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (res.ok) {
+                    alert('บันทึกสัญญาสำเร็จ');
+                    document.getElementById('addContractForm').reset();
+                    loadContracts();
+                } else {
+                    const errText = await res.text();
+                    alert('เกิดข้อผิดพลาด: ' + errText);
+                }
+            } catch (err) {
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
             }
         });
 
-        const thaiMonths = [
-            "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
-            "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
-        ];
-
-        function getDueDate(createdAtStr, dueDay, installmentNo) {
-            let createdDate = createdAtStr && createdAtStr !== '-' ? new Date(createdAtStr) : new Date();
-            let year = createdDate.getFullYear();
-            let month = createdDate.getMonth() + installmentNo;
-            let targetDate = new Date(year, month, dueDay);
-            return targetDate;
-        }
-
         async function loadContracts() {
             try {
-                const res = await fetch('/api/contracts');
+                const res = await fetch('/admin/api/contracts');
+                if (!res.ok) return;
                 const contracts = await res.json();
-                const tbody = document.getElementById('contractsTableBody');
-                const unpaidTbody = document.getElementById('unpaidBillsTableBody');
-                const reclaimTbody = document.getElementById('reclaimBillsTableBody');
-                
-                tbody.innerHTML = '';
-                unpaidTbody.innerHTML = '';
-                reclaimTbody.innerHTML = '';
+                globalContractsData = contracts;
 
                 let totalContracts = contracts.length;
                 let activeContracts = 0;
@@ -578,296 +589,236 @@
                 let reclaimContracts = 0;
                 let totalPaid = 0;
 
-                let dueThisMonthCount = 0;
-                let paidThisMonthCount = 0;
-                let dueAmountThisMonth = 0;
-                let paidAmountThisMonth = 0;
+                const tbody = document.getElementById('contractsTableBody');
+                tbody.innerHTML = '';
 
-                let unpaidBillsList = [];
-                let reclaimBillsList = [];
+                const unpaidTbody = document.getElementById('unpaidBillsTableBody');
+                unpaidTbody.innerHTML = '';
+                let unpaidCount = 0;
 
-                const now = new Date();
-                const currentMonth = now.getMonth();
-                const currentYear = now.getFullYear();
+                const reclaimTbody = document.getElementById('reclaimBillsTableBody');
+                reclaimTbody.innerHTML = '';
+                let reclaimCount = 0;
 
                 contracts.forEach(c => {
-                    const statusStr = (c.status || 'active').toLowerCase();
-                    const isClosed = (statusStr === 'closed' || statusStr === 'closed_early');
-                    const isCancelled = (statusStr === 'cancelled');
+                    if (c.status === 'active' || c.status === 'overdue_1') activeContracts++;
+                    if (c.status === 'overdue_2') overdue2Contracts++;
+                    if (c.status === 'reclaim') reclaimContracts++;
 
-                    const overdueCount = c.overdue_count || 0;
-                    if (!isClosed && !isCancelled) {
-                        if (statusStr === 'reclaim' || overdueCount >= 3) {
-                            reclaimContracts++;
-                        } else if (statusStr === 'overdue_2' || overdueCount === 2) {
-                            overdue2Contracts++;
-                        } else if (statusStr === 'active' || statusStr === 'overdue_1') {
-                            activeContracts++;
+                    const paidSum = c.payments ? c.payments.filter(p => p.status === 'paid').reduce((sum, p) => sum + parseFloat(p.amount || 0), 0) : 0;
+                    totalPaid += paidSum;
+
+                    // แสดงเฉพาะบิลค้างชำระในรอบถัดไปเพียง 1 บิลต่อสัญญา
+                    if (c.status !== 'closed' && c.status !== 'closed_early' && c.status !== 'cancelled' && c.payments) {
+                        const unpaidPayments = c.payments.filter(p => p.status !== 'paid');
+                        if (unpaidPayments.length > 0) {
+                            const nextP = unpaidPayments[0]; // ดึงบิลถัดไปงวดเดียว
+                            unpaidCount++;
+
+                            const unpaidTr = document.createElement('tr');
+                            unpaidTr.innerHTML = `
+                                <td>
+                                    <div class="fw-bold">${c.customer_name}</div>
+                                    <small class="text-muted">สัญญา: ${c.contract_number}</small>
+                                </td>
+                                <td>${c.product_name}</td>
+                                <td><span class="badge bg-secondary">งวดที่ ${nextP.installment_no}/${c.total_installments}</span></td>
+                                <td>
+                                    ${c.status === 'overdue_2' ? '<span class="badge bg-warning text-dark">ค้างชำระ 2 งวด</span>' : 
+                                      c.status === 'reclaim' ? '<span class="badge bg-danger">เรียกคืนเครื่อง</span>' : 
+                                      '<span class="badge bg-info text-dark">รอชำระงวดถัดไป</span>'}
+                                </td>
+                                <td class="fw-bold text-primary">฿${parseFloat(nextP.amount || c.installment_amount).toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
+                                <td>ทุกวันที่ ${c.due_day} ของเดือน</td>
+                                <td class="text-center">
+                                    <button class="btn btn-sm btn-success fw-bold" onclick="payInstallment(${c.id}, ${nextP.installment_no})"><i class="fa-solid fa-check me-1"></i>รับชำระ</button>
+                                </td>
+                            `;
+                            unpaidTbody.appendChild(unpaidTr);
                         }
                     }
 
-                    if (statusStr === 'reclaim' || overdueCount >= 2) {
-                        if (!isClosed && !isCancelled) {
-                            reclaimBillsList.push({
-                                contract_id: c.id,
-                                contract_number: c.contract_number,
-                                customer_name: c.customer_name,
-                                phone: c.phone || '-',
-                                product_name: c.product_name || '-',
-                                overdue_count: overdueCount,
-                                status: statusStr
-                            });
-                        }
+                    if (c.status === 'overdue_2' || c.status === 'reclaim') {
+                        reclaimCount++;
+                        const recTr = document.createElement('tr');
+                        recTr.innerHTML = `
+                            <td>
+                                <div class="fw-bold text-danger">${c.customer_name}</div>
+                                <small class="text-muted">สัญญา: ${c.contract_number}</small>
+                            </td>
+                            <td>${c.phone || '-'}</td>
+                            <td>${c.product_name}</td>
+                            <td><span class="badge bg-danger">${c.overdue_count || 2} งวด</span></td>
+                            <td>
+                                ${c.status === 'reclaim' ? '<span class="badge bg-danger">เรียกคืนเครื่อง (ค้าง 3+)</span>' : '<span class="badge bg-warning text-dark">เตือนค้างชำระครั้งที่ 2</span>'}
+                            </td>
+                            <td class="text-center">
+                                <button class="btn btn-sm btn-outline-primary me-1" onclick="openLineNotifyModal(${c.id}, '${c.customer_name}', '${c.contract_number}')"><i class="fa-brands fa-line me-1"></i>ทวงถาม</button>
+                                <button class="btn btn-sm btn-warning" onclick="payInstallment(${c.id})"><i class="fa-solid fa-hand-holding-dollar me-1"></i>รับชำระ</button>
+                            </td>
+                        `;
+                        reclaimTbody.appendChild(recTr);
                     }
 
-                    const paidCount = c.paid_count !== undefined ? c.paid_count : (c.paid_installments || 0);
-                    const totalInstallments = Number(c.total_installments || 0);
-                    const installmentAmount = Number(c.installment_amount || 0);
-                    const totalAmount = Number(c.total_amount || 0);
-                    const phone = c.phone || '';
-                    const productName = c.product_name || '';
-                    const imei = c.imei ? `IMEI: ${c.imei}` : '';
-                    const serialNumber = c.serial_number ? `S/N: ${c.serial_number}` : '';
-                    const colorCap = (c.color || c.capacity) ? `สี: ${c.color || '-'} | ความจุ: ${c.capacity || '-'}` : '';
-                    const idCard = c.id_card ? ` (ปชช: ${c.id_card})` : '';
-                    const dueDay = c.due_day || 5;
-                    const createdAtFormatted = c.created_at_formatted || '-';
-                    const evidenceFile = c.evidence_file || '';
+                    let statusBadge = '';
+                    if (c.status === 'active') statusBadge = '<span class="badge badge-status-active">ปกติ</span>';
+                    else if (c.status === 'overdue_1') statusBadge = '<span class="badge badge-status-overdue1">ค้าง 1 งวด</span>';
+                    else if (c.status === 'overdue_2') statusBadge = '<span class="badge badge-status-overdue2">ค้าง 2 งวด</span>';
+                    else if (c.status === 'reclaim') statusBadge = '<span class="badge badge-status-reclaim">เรียกคืนเครื่อง</span>';
+                    else if (c.status === 'closed' || c.status === 'closed_early') statusBadge = '<span class="badge badge-status-closed">ปิดยอดแล้ว</span>';
+                    else if (c.status === 'cancelled') statusBadge = '<span class="badge badge-status-cancelled">ยกเลิก</span>';
 
-                    totalPaid += (paidCount * installmentAmount);
+                    let evidenceBtn = c.evidence_file 
+                        ? `<a href="/static/uploads/${c.evidence_file}" target="_blank" class="btn btn-sm btn-outline-info p-1 py-0 ms-1" title="ดูหลักฐาน"><i class="fa-solid fa-file-image"></i></a>`
+                        : '';
 
-                    if (c.payments && Array.isArray(c.payments)) {
-                        c.payments.forEach(p => {
-                            const pInstNo = p.installment_no;
-                            const pDueDate = getDueDate(c.created_at, dueDay, pInstNo);
-                            const pAmount = Number(p.amount || installmentAmount);
-
-                            if (pDueDate.getMonth() === currentMonth && pDueDate.getFullYear() === currentYear) {
-                                if (!isCancelled) {
-                                    dueThisMonthCount++;
-                                    dueAmountThisMonth += pAmount;
-
-                                    if (p.status === 'paid') {
-                                        paidThisMonthCount++;
-                                        paidAmountThisMonth += pAmount;
-                                    }
-                                }
-                            }
-
-                            if (p.status !== 'paid' && !isClosed && !isCancelled) {
-                                unpaidBillsList.push({
-                                    contract_id: c.id,
-                                    contract_number: c.contract_number,
-                                    customer_name: c.customer_name,
-                                    phone: c.phone || '-',
-                                    product_name: c.product_name || '-',
-                                    installment_no: pInstNo,
-                                    total_installments: totalInstallments,
-                                    amount: pAmount,
-                                    due_date: pDueDate,
-                                    status: p.status
-                                });
-                            }
-                        });
-                    }
-
-                    let badgeClass = 'badge-status-active';
-                    let statusLabel = 'ปกติ (Active)';
-                    if (isClosed) {
-                        badgeClass = 'badge-status-closed';
-                        statusLabel = statusStr === 'closed_early' ? 'ปิดยอดก่อนกำหนด' : 'ปิดยอดแล้ว';
-                    } else if (isCancelled) {
-                        badgeClass = 'badge-status-cancelled';
-                        statusLabel = 'ยกเลิกสัญญา';
-                    } else if (statusStr === 'reclaim' || overdueCount >= 3) {
-                        badgeClass = 'badge-status-reclaim';
-                        statusLabel = 'เรียกคืนเครื่อง';
-                    } else if (statusStr === 'overdue_2' || overdueCount === 2) {
-                        badgeClass = 'badge-status-overdue2';
-                        statusLabel = 'ค้างชำระ 2 ครั้ง';
-                    } else if (statusStr === 'overdue_1' || overdueCount === 1) {
-                        badgeClass = 'badge-status-overdue1';
-                        statusLabel = 'ค้างชำระ 1 ครั้ง';
-                    }
-
-                    let evidenceHtml = '-';
-                    if (evidenceFile) {
-                        evidenceHtml = `<a href="/static/uploads/${evidenceFile}" target="_blank" class="btn btn-sm btn-outline-info py-0 px-2 small"><i class="fa-solid fa-paperclip me-1"></i>ดูหลักฐาน</a>`;
-                    }
-
-                    let specDetails = [];
-                    if (c.imei) specDetails.push(`IMEI: ${c.imei}`);
-                    if (c.serial_number) specDetails.push(`S/N: ${c.serial_number}`);
-                    if (c.color || c.capacity) specDetails.push(`${c.color || '-'} / ${c.capacity || '-'}`);
-                    let specText = specDetails.length > 0 ? `<div class="small text-muted">${specDetails.join(' | ')}</div>` : '';
-
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
                         <td>
-                            <strong class="text-primary">${c.contract_number}</strong><br>
-                            <span class="fw-semibold">${c.customer_name}</span><br>
-                            <small class="text-muted"><i class="fa-solid fa-phone me-1"></i>${phone}${idCard}</small>
+                            <div class="fw-bold">${c.customer_name}</div>
+                            <small class="text-muted">${c.contract_number} | Tel: ${c.phone}</small>
                         </td>
                         <td>
-                            <strong>${productName}</strong>
-                            ${specText}
-                            <div class="mt-1">${evidenceHtml}</div>
+                            <div>${c.product_name} ${evidenceBtn}</div>
+                            <small class="text-muted">IMEI/SN: ${c.imei || c.serial_number || '-'} | ${c.color || '-'} ${c.capacity || ''}</small>
                         </td>
                         <td>
-                            <span class="fw-bold">${paidCount} / ${totalInstallments}</span> งวด<br>
-                            <small class="text-muted">งวดละ ฿${installmentAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})}</small>
+                            <div class="fw-bold text-primary">${c.paid_count}/${c.total_installments} งวด</div>
+                            <small class="text-muted">฿${c.installment_amount.toLocaleString()}/งวด (ทุกวันที่ ${c.due_day})</small>
                         </td>
-                        <td><small>${createdAtFormatted}</small></td>
-                        <td><span class="badge ${badgeClass} p-2">${statusLabel}</span></td>
+                        <td><small>${c.created_at_formatted}</small></td>
+                        <td>${statusBadge}</td>
                         <td class="text-center">
-                            <div class="btn-group action-btn-group" role="group">
-                                <button class="btn btn-sm btn-success" onclick="payNextInstallment(${c.id})" ${isClosed || isCancelled ? 'disabled' : ''} title="ชำระงวดถัดไป">
-                                    <i class="fa-solid fa-plus-circle"></i> จ่าย
-                                </button>
-                                <button class="btn btn-sm btn-warning text-dark" onclick="unpayLastInstallment(${c.id})" ${paidCount === 0 ? 'disabled' : ''} title="ยกเลิกการจ่ายงวดล่าสุด">
-                                    <i class="fa-solid fa-rotate-left"></i> ย้อน
-                                </button>
+                            <div class="btn-group action-btn-group">
+                                <button class="btn btn-sm btn-success" onclick="payInstallment(${c.id})" title="บันทึกรับชำระ"><i class="fa-solid fa-plus"></i></button>
+                                <button class="btn btn-sm btn-warning" onclick="unpayInstallment(${c.id})" title="ยกเลิกการรับชำระ"><i class="fa-solid fa-rotate-left"></i></button>
+                                <button class="btn btn-sm btn-info text-white" onclick="closeEarly(${c.id})" title="ปิดยอดก่อนกำหนด"><i class="fa-solid fa-bolt"></i> ปิดยอด</button>
                             </div>
                         </td>
                         <td class="text-center">
-                            <div class="btn-group action-btn-group" role="group">
-                                <a href="/admin/contract/doc/${c.id}" target="_blank" class="btn btn-sm btn-outline-primary" title="ดูเอกสารสัญญา">
-                                    <i class="fa-solid fa-file-pdf"></i>
-                                </a>
-                                <button class="btn btn-sm btn-outline-info" onclick="openHistoryModal(${c.id}, '${c.contract_number}')" title="ประวัติการชำระ">
-                                    <i class="fa-solid fa-clock-rotate-left"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="openEditModal(${JSON.stringify(c).replace(/"/g, '&quot;')})" title="แก้ไข">
-                                    <i class="fa-solid fa-pen"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา">
-                                    <i class="fa-solid fa-trash"></i>
-                                </button>
+                            <div class="btn-group action-btn-group">
+                                <button class="btn btn-sm btn-outline-primary" onclick="openLineNotifyModal(${c.id}, '${c.customer_name}', '${c.contract_number}')" title="ส่ง LINE"><i class="fa-brands fa-line"></i></button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="viewHistory(${c.id}, '${c.contract_number}')" title="ประวัติการชำระ"><i class="fa-solid fa-history"></i></button>
+                                <button class="btn btn-sm btn-outline-warning" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
                             </div>
                         </td>
                     `;
-                    tbody.appendChild(row);
+                    tbody.appendChild(tr);
                 });
 
                 document.getElementById('statTotalContracts').innerText = totalContracts;
                 document.getElementById('statActiveContracts').innerText = activeContracts;
                 document.getElementById('statOverdue2Contracts').innerText = overdue2Contracts;
                 document.getElementById('statReclaimContracts').innerText = reclaimContracts;
-                document.getElementById('statTotalPaid').innerText = '฿' + totalPaid.toLocaleString('th-TH', {minimumFractionDigits: 2});
+                document.getElementById('statTotalPaid').innerText = '฿' + totalPaid.toLocaleString('th-TH', {minimumFractionDigits:2});
 
-                document.getElementById('statDueThisMonth').innerText = dueThisMonthCount;
-                document.getElementById('statPaidThisMonth').innerText = paidThisMonthCount;
-                document.getElementById('statDueAmountThisMonth').innerText = '฿' + dueAmountThisMonth.toLocaleString('th-TH', {minimumFractionDigits: 2});
-                document.getElementById('statPaidAmountThisMonth').innerText = '฿' + paidAmountThisMonth.toLocaleString('th-TH', {minimumFractionDigits: 2});
+                document.getElementById('unpaidBillsBadge').innerText = unpaidCount + ' รายการ';
+                document.getElementById('reclaimBillsBadge').innerText = reclaimCount + ' รายการ';
 
-                // Render Reclaim / Overdue 2 Notice Box
-                const reclaimAlertContainer = document.getElementById('reclaimAlertContainer');
-                document.getElementById('reclaimBillsBadge').innerText = `${reclaimBillsList.length} รายการ`;
-                
-                if (reclaimBillsList.length > 0) {
-                    reclaimAlertContainer.style.display = 'flex';
-                    reclaimBillsList.forEach(item => {
-                        let statusBadge = item.overdue_count >= 3 ? '<span class="badge bg-danger p-2">เรียกคืนเครื่อง (ค้าง 3+)</span>' : '<span class="badge bg-warning text-dark p-2">ค้างชำระ 2 ครั้ง</span>';
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = `
-                            <td><strong class="text-primary">${item.contract_number}</strong><br><span>${item.customer_name}</span></td>
-                            <td><i class="fa-solid fa-phone me-1 text-muted"></i>${item.phone}</td>
-                            <td>${item.product_name}</td>
-                            <td><span class="fw-bold text-danger">${item.overdue_count} งวด</span></td>
-                            <td>${statusBadge}</td>
-                            <td class="text-center">
-                                <a href="/admin/contract/doc/${item.contract_id}" target="_blank" class="btn btn-sm btn-outline-primary">
-                                    <i class="fa-solid fa-file-invoice me-1"></i> ดูสัญญา
-                                </a>
-                            </td>
-                        `;
-                        reclaimTbody.appendChild(tr);
-                    });
+                if (reclaimCount > 0) {
+                    document.getElementById('reclaimAlertContainer').style.display = 'block';
                 } else {
-                    reclaimAlertContainer.style.display = 'none';
-                }
-
-                // Render Unpaid Monthly Bills List
-                document.getElementById('unpaidBillsBadge').innerText = `${unpaidBillsList.length} รายการ`;
-                if (unpaidBillsList.length === 0) {
-                    unpaidTbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">ไม่มีรายการบิลที่ค้างชำระในขณะนี้ 🎉</td></tr>`;
-                } else {
-                    unpaidBillsList.sort((a, b) => a.due_date - b.due_date);
-                    unpaidBillsList.forEach(item => {
-                        const day = String(item.due_date.getDate()).padStart(2, '0');
-                        const month = thaiMonths[item.due_date.getMonth()];
-                        const year = item.due_date.getFullYear() + 543;
-                        const dueDateStr = `${day} ${month} ${year}`;
-
-                        let overdueStatus = '<span class="badge bg-secondary">รอดำเนินการ</span>';
-                        const today = new Date();
-                        today.setHours(0,0,0,0);
-                        const diffTime = today - item.due_date;
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-                        if (diffDays > 0) {
-                            overdueStatus = `<span class="badge bg-danger">เลยกำหนด ${diffDays} วัน</span>`;
-                        } else if (diffDays === 0) {
-                            overdueStatus = `<span class="badge bg-warning text-dark">ถึงกำหนดวันนี้</span>`;
-                        }
-
-                        const tr = document.createElement('tr');
-                        tr.innerHTML = `
-                            <td><strong class="text-primary">${item.contract_number}</strong><br><span>${item.customer_name}</span></td>
-                            <td>${item.product_name}</td>
-                            <td>งวดที่ <span class="fw-bold">${item.installment_no}</span> / ${item.total_installments}</td>
-                            <td>${overdueStatus}</td>
-                            <td class="fw-bold text-dark">฿${item.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
-                            <td><small class="text-muted">${dueDateStr}</small></td>
-                            <td class="text-center">
-                                <button class="btn btn-sm btn-success fw-bold" onclick="payNextInstallment(${item.contract_id})">
-                                    <i class="fa-solid fa-check me-1"></i> รับชำระ
-                                </button>
-                            </td>
-                        `;
-                        unpaidTbody.appendChild(tr);
-                    });
+                    document.getElementById('reclaimAlertContainer').style.display = 'none';
                 }
 
             } catch (err) {
-                console.error('Error loading contracts:', err);
+                console.error("Error loading contracts:", err);
             }
         }
 
-        async function payNextInstallment(contractId) {
-            if (!confirm('ยืนยันการรับชำระเงินในงวดนี้?')) return;
-            const res = await fetch(`/api/contracts/${contractId}/pay`, { method: 'POST' });
-            if (res.ok) {
-                loadContracts();
-            } else {
-                const err = await res.json();
-                alert(err.error || 'เกิดข้อผิดพลาดในการชำระเงิน');
+        async function payInstallment(contractId, installmentNo = null) {
+            if (!confirm('ยืนยันการรับชำระเงินงวดนี้?')) return;
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}/pay`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ installment_no: installmentNo })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    loadContracts();
+                } else {
+                    alert(data.error || 'เกิดข้อผิดพลาด');
+                }
+            } catch (err) {
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
             }
         }
 
-        async function unpayLastInstallment(contractId) {
-            if (!confirm('ต้องการยกเลิกการชำระเงินงวดล่าสุดใช่หรือไม่?')) return;
-            const res = await fetch(`/api/contracts/${contractId}/unpay`, { method: 'POST' });
-            if (res.ok) {
-                loadContracts();
-            } else {
-                const err = await res.json();
-                alert(err.error || 'เกิดข้อผิดพลาดในการยกเลิกชำระเงิน');
+        async function unpayInstallment(contractId) {
+            if (!confirm('ยืนยันการยกเลิกการชำระงวดล่าสุด?')) return;
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}/unpay`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    loadContracts();
+                } else {
+                    alert(data.error || 'เกิดข้อผิดพลาด');
+                }
+            } catch (err) {
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
             }
         }
 
-        async function deleteContract(contractId) {
-            if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบสัญญานี้? การดำเนินการนี้จะไม่สามารถย้อนกลับได้')) return;
-            const res = await fetch(`/api/contracts/${contractId}`, { method: 'DELETE' });
-            if (res.ok) {
-                loadContracts();
-            } else {
-                const err = await res.json();
-                alert(err.error || 'เกิดข้อผิดพลาดในการลบสัญญา');
+        async function closeEarly(contractId) {
+            if (!confirm('คุณต้องการปิดยอดสัญญานี้ก่อนกำหนดใช่หรือไม่? (ส่วนลดปิดยอดจะถูกนำไปคำนวณ)')) return;
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}/close_early`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('ปิดยอดสัญญาเรียบร้อยแล้ว');
+                    loadContracts();
+                } else {
+                    alert(data.error || 'เกิดข้อผิดพลาด');
+                }
+            } catch (err) {
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
             }
         }
 
-        function openEditModal(contract) {
+        async function viewHistory(contractId, contractNumber) {
+            document.getElementById('modalContractNum').innerText = contractNumber;
+            const historyList = document.getElementById('historyList');
+            historyList.innerHTML = '<li class="list-group-item text-center">กำลังโหลดข้อมูล...</li>';
+            historyModalObj.show();
+
+            try {
+                const res = await fetch(`/admin/api/payments/${contractId}`);
+                if (!res.ok) return;
+                const payments = await res.json();
+
+                historyList.innerHTML = '';
+                payments.forEach(p => {
+                    const isPaid = p.status === 'paid';
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                    li.innerHTML = `
+                        <div>
+                            <div class="fw-bold">งวดที่ ${p.installment_no} - ฿${parseFloat(p.amount).toLocaleString('th-TH', {minimumFractionDigits:2})}</div>
+                            <small class="text-muted">${isPaid ? 'ชำระเมื่อ: ' + (p.paid_at || '-') : 'สถานะ: ยังไม่ได้ชำระ'}</small>
+                        </div>
+                        <div>
+                            ${isPaid ? `<span class="badge bg-success me-1">ชำระแล้ว</span><a href="/admin/bill/${p.id}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="fa-solid fa-print"></i> บิล</a>` : '<span class="badge bg-secondary">รอดำเนินการ</span>'}
+                        </div>
+                    `;
+                    historyList.appendChild(li);
+                });
+            } catch (err) {
+                historyList.innerHTML = '<li class="list-group-item text-danger text-center">ไม่สามารถโหลดประวัติได้</li>';
+            }
+        }
+
+        function openEditModal(contractId) {
+            const contract = globalContractsData.find(c => c.id === contractId);
+            if (!contract) return;
+
             document.getElementById('edit_id').value = contract.id;
             document.getElementById('edit_customer_name').value = contract.customer_name || '';
             document.getElementById('edit_phone').value = contract.phone || '';
@@ -878,11 +829,11 @@
             document.getElementById('edit_color').value = contract.color || '';
             document.getElementById('edit_capacity').value = contract.capacity || '';
 
-            const infoDiv = document.getElementById('currentEvidenceInfo');
+            const evidenceInfo = document.getElementById('currentEvidenceInfo');
             if (contract.evidence_file) {
-                infoDiv.innerHTML = `หลักฐานปัจจุบัน: <a href="/static/uploads/${contract.evidence_file}" target="_blank">เปิดดูไฟล์</a>`;
+                evidenceInfo.innerHTML = `ไฟล์ปัจจุบัน: <a href="/static/uploads/${contract.evidence_file}" target="_blank" class="text-primary">${contract.evidence_file}</a>`;
             } else {
-                infoDiv.innerHTML = 'ยังไม่มีหลักฐานแนบไว้';
+                evidenceInfo.innerText = 'ยังไม่มีการอัปโหลดไฟล์หลักฐาน';
             }
 
             editModalObj.show();
@@ -890,7 +841,7 @@
 
         document.getElementById('editContractForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const id = document.getElementById('edit_id').value;
+            const contractId = document.getElementById('edit_id').value;
             const formData = new FormData();
             formData.append('customer_name', document.getElementById('edit_customer_name').value);
             formData.append('phone', document.getElementById('edit_phone').value);
@@ -906,62 +857,74 @@
                 formData.append('evidence_file', fileInput.files[0]);
             }
 
-            const res = await fetch(`/api/contracts/${id}`, {
-                method: 'PUT',
-                body: formData
-            });
-
-            if (res.ok) {
-                alert('แก้ไขข้อมูลสัญญาสำเร็จ');
-                editModalObj.hide();
-                loadContracts();
-            } else {
-                const err = await res.json();
-                alert(err.error || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}`, {
+                    method: 'PUT',
+                    body: formData
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('บันทึกการแก้ไขเรียบร้อยแล้ว');
+                    editModalObj.hide();
+                    loadContracts();
+                } else {
+                    alert(data.error || 'เกิดข้อผิดพลาดในการแก้ไข');
+                }
+            } catch (err) {
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
             }
         });
 
-        async function openHistoryModal(contractId, contractNum) {
-            document.getElementById('modalContractNum').innerText = contractNum;
-            const res = await fetch(`/api/payments/${contractId}`);
-            if (!res.ok) {
-                alert('ไม่สามารถดึงข้อมูลประวัติการชำระได้');
+        async function deleteContract(contractId) {
+            if (!confirm('คุณแน่ใจหรือว่าต้องการลบสัญญานี้? การดำเนินการนี้จะไม่สามารถยกเลิกได้')) return;
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}`, {
+                    method: 'DELETE'
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('ลบสัญญาเรียบร้อยแล้ว');
+                    loadContracts();
+                } else {
+                    alert(data.error || 'เกิดข้อผิดพลาด');
+                }
+            } catch (err) {
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+            }
+        }
+
+        function openLineNotifyModal(contractId, customerName, contractNumber) {
+            document.getElementById('notify_contract_id').value = contractId;
+            document.getElementById('notify_customer_info').innerText = `${customerName} (${contractNumber})`;
+            document.getElementById('notify_message').value = '';
+            lineNotifyModalObj.show();
+        }
+
+        async function submitLineMessage() {
+            const contractId = document.getElementById('notify_contract_id').value;
+            const message = document.getElementById('notify_message').value.trim();
+
+            if (!message) {
+                alert('กรุณาระบุข้อความที่ต้องการส่ง');
                 return;
             }
-            const payments = await res.json();
-            const historyList = document.getElementById('historyList');
-            historyList.innerHTML = '';
 
-            if (payments.length === 0) {
-                historyList.innerHTML = '<li class="list-group-item text-center text-muted py-3">ไม่มีรายการงวดชำระ</li>';
-            } else {
-                payments.forEach(p => {
-                    const isPaid = p.status === 'paid';
-                    const badge = isPaid 
-                        ? '<span class="badge bg-success"><i class="fa-solid fa-check me-1"></i>ชำระแล้ว</span>' 
-                        : '<span class="badge bg-secondary">รอดำเนินการ</span>';
-                    const paidAtText = p.paid_at ? `<div class="small text-muted"><i class="fa-solid fa-clock me-1"></i>ชำระเมื่อ: ${p.paid_at}</div>` : '';
-                    const billBtn = isPaid 
-                        ? `<a href="/admin/bill/${p.id}" target="_blank" class="btn btn-sm btn-outline-primary ms-2"><i class="fa-solid fa-receipt me-1"></i>บิล</a>` 
-                        : '';
-
-                    const li = document.createElement('li');
-                    li.className = 'list-group-item d-flex justify-content-between align-items-center py-3';
-                    li.innerHTML = `
-                        <div>
-                            <div class="fw-bold">งวดที่ ${p.installment_no} - ฿${Number(p.amount).toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
-                            ${paidAtText}
-                        </div>
-                        <div class="d-flex align-items-center">
-                            ${badge}
-                            ${billBtn}
-                        </div>
-                    `;
-                    historyList.appendChild(li);
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}/send_custom_message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
                 });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    lineNotifyModalObj.hide();
+                } else {
+                    alert(data.error || 'ไม่สามารถส่งข้อความได้');
+                }
+            } catch (err) {
+                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
             }
-
-            historyModalObj.show();
         }
     </script>
 </body>

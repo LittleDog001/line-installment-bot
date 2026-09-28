@@ -18,7 +18,8 @@ import qrcode as qrcode_lib
 
 from admin_routes import (
     admin_bp, process_contracts_api, process_contract_detail_api, 
-    process_payments_by_contract_api, pay_contract_installment_api, unpay_contract_installment_api
+    process_payments_by_contract_api, pay_contract_installment_api, unpay_contract_installment_api,
+    build_flex_message_ui
 )
 
 app = Flask(__name__)
@@ -149,14 +150,8 @@ def root_api_contract_detail(contract_id):
             cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
             contract = cursor.fetchone()
             if contract and contract.get('line_user_id') and contract.get('status') not in ['closed', 'closed_early']:
-                cancel_msg = (
-                    f"⚠️ แจ้งเตือนสถานะสัญญาของคุณ\n"
-                    f"-------------------------------\n"
-                    f"📦 สินค้า: {contract['product_name']}\n"
-                    f"เลขที่สัญญา: {contract['contract_number']}\n\n"
-                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบ** เรียบร้อยแล้วครับ 🙏"
-                )
-                send_simple_push_notification(contract['line_user_id'], cancel_msg)
+                cancel_msg = "สัญญาเช่าซื้อของคุณได้ถูก ยกเลิก / ลบออกจากระบบ เรียบร้อยแล้วครับ 🙏"
+                send_simple_push_notification(contract['line_user_id'], cancel_msg, title="⚠️ แจ้งเตือนสถานะสัญญา", contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#dc3545")
             cursor.close()
             conn.close()
         except Exception as e:
@@ -186,14 +181,8 @@ def root_api_update_contract_status(contract_id):
             cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
             contract = cursor.fetchone()
             if contract and contract.get('line_user_id'):
-                cancel_msg = (
-                    f"⚠️ แจ้งเตือนสถานะสัญญาของคุณ\n"
-                    f"-------------------------------\n"
-                    f"📦 สินค้า: {contract['product_name']}\n"
-                    f"เลขที่สัญญา: {contract['contract_number']}\n\n"
-                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก** จากทางระบบเรียบร้อยแล้วครับ 🙏"
-                )
-                send_simple_push_notification(contract['line_user_id'], cancel_msg)
+                cancel_msg = "สัญญาเช่าซื้อของคุณได้ถูก ยกเลิก จากทางระบบเรียบร้อยแล้วครับ 🙏"
+                send_simple_push_notification(contract['line_user_id'], cancel_msg, title="⚠️ แจ้งเตือนสถานะสัญญา", contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#dc3545")
 
         return jsonify({"success": True, "message": f"Contract status updated to '{new_status}' successfully", "status": new_status})
     except Exception as e:
@@ -234,14 +223,8 @@ def root_api_close_contract_early(contract_id):
         conn.commit()
 
         if contract.get('line_user_id'):
-            thank_msg = (
-                f"🎉 ขอขอบพระคุณเป็นอย่างยิ่งครับ!\n"
-                f"-------------------------------\n"
-                f"📦 สินค้า: {contract['product_name']}\n"
-                f"เลขที่สัญญา: {contract['contract_number']}\n\n"
-                f"ทางร้านได้ทำการบันทึกยืนยันการปิดยอดสัญญาเรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเราครับ 🙏✨"
-            )
-            send_simple_push_notification(contract['line_user_id'], thank_msg)
+            thank_msg = "ทางร้านได้ทำการบันทึกยืนยันการปิดยอดสัญญาเรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเราครับ 🙏✨"
+            send_simple_push_notification(contract['line_user_id'], thank_msg, title="🎉 ขอบคุณที่ใช้บริการ", contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#198754")
 
         return jsonify({'message': 'บันทึกการปิดยอดสัญญาสำเร็จ'})
     except Exception as e:
@@ -311,37 +294,28 @@ def check_due_notifications():
 
             if 0 <= days_until_due <= 3:
                 msg = (
-                    f"⏰ แจ้งเตือนค่างวดผ่อนชำระ (ใกล้ถึงวันกำหนดชำระ)\n"
-                    f"-------------------------------\n"
-                    f"📦 สินค้า: {c['product_name']}\n"
                     f"🔢 งวดที่ต้องชำระ: งวดที่ {inst_no}/{c['total_installments']}\n"
                     f"📅 กำหนดชำระ: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
                     f"💰 ยอดชำระ: {base_amount:,.2f} บาท\n\n"
                     f"กรุณาชำระเงินตามกำหนด ขอบคุณครับ"
                 )
-                send_line_push_notification(line_user_id, msg, inst_no, base_amount)
+                send_line_push_notification(line_user_id, msg, inst_no, base_amount, title="⏰ แจ้งเตือนค่างวดผ่อนชำระ (ใกล้ถึงวันกำหนดชำระ)", contract_number=c.get('contract_number'), product_name=c.get('product_name'))
                 notified_count += 1
 
             elif 1 <= days_overdue <= 2:
                 msg = (
-                    f"🔔 แจ้งเตือนระยะที่ 1: เลยกำหนดชำระ (อนุโลม 2 วัน)\n"
-                    f"-------------------------------\n"
-                    f"📦 สินค้า: {c['product_name']}\n"
                     f"🔢 งวดที่ต้องชำระ: งวดที่ {inst_no}/{c['total_installments']}\n"
                     f"📅 กำหนดชำระเดิม: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
                     f"💰 ยอดชำระ: {base_amount:,.2f} บาท (ไม่มีค่าปรับ)\n\n"
                     f"ขณะนี้เลยกำหนดชำระมาแล้ว {days_overdue} วัน กรุณาดำเนินการชำระเพื่อป้องกันการเกิดค่าปรับครับ"
                 )
-                send_line_push_notification(line_user_id, msg, inst_no, base_amount)
+                send_line_push_notification(line_user_id, msg, inst_no, base_amount, title="🔔 แจ้งเตือนระยะที่ 1: เลยกำหนดชำระ (อนุโลม 2 วัน)", contract_number=c.get('contract_number'), product_name=c.get('product_name'))
                 notified_count += 1
 
             elif 3 <= days_overdue <= 7:
                 fine = days_overdue * 100
                 total_with_fine = base_amount + fine
                 msg = (
-                    f"⚠️ แจ้งเตือนระยะที่ 2: เลยกำหนดชำระ {days_overdue} วัน\n"
-                    f"-------------------------------\n"
-                    f"📦 สินค้า: {c['product_name']}\n"
                     f"🔢 งวดที่ต้องชำระ: งวดที่ {inst_no}/{c['total_installments']}\n"
                     f"📅 กำหนดชำระเดิม: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
                     f"💰 ค่างวด: {base_amount:,.2f} บาท\n"
@@ -349,7 +323,7 @@ def check_due_notifications():
                     f"💵 ยอดรวมที่ต้องชำระ: {total_with_fine:,.2f} บาท\n\n"
                     f"ขณะนี้อยู่ระหว่างค้างชำระ กรุณาชำระเงินโดยเร็วครับ"
                 )
-                send_line_push_notification(line_user_id, msg, inst_no, total_with_fine)
+                send_line_push_notification(line_user_id, msg, inst_no, total_with_fine, title=f"⚠️ แจ้งเตือนระยะที่ 2: เลยกำหนดชำระ {days_overdue} วัน", contract_number=c.get('contract_number'), product_name=c.get('product_name'), color="#ffc107")
                 notified_count += 1
 
             elif days_overdue > 7:
@@ -387,15 +361,12 @@ def check_due_notifications():
                 total_amount_shifted = float(updated_p['amount'])
 
                 msg = (
-                    f"🚨 แจ้งเตือนระยะที่ 3: เกินกำหนดชำระเกิน 7 วัน (สถานะ: ค้างชำระ)\n"
-                    f"-------------------------------\n"
-                    f"📦 สินค้า: {c['product_name']}\n"
                     f"🔢 งวดที่ค้างชำระ: งวดที่ {inst_no}\n"
                     f"📅 กำหนดชำระเดิม: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
                     f"💸 ค่าปรับบวกเพิ่ม: {fine_amount:,.2f} บาท\n\n"
                     f"ขณะนี้เลยกำหนดชำระแล้ว ระบบได้ข้ามเดือนที่ค้างชำระไปยังงวดถัดไป และนำงวดที่ค้างชำระพร้อมค่าปรับรวม {total_amount_shifted:,.2f} บาท ไปยกยอดเป็นงวดสุดท้ายเรียบร้อยแล้วครับ"
                 )
-                send_simple_push_notification(line_user_id, msg)
+                send_simple_push_notification(line_user_id, msg, title="🚨 แจ้งเตือนระยะที่ 3: เกินกำหนดชำระเกิน 7 วัน", contract_number=c.get('contract_number'), product_name=c.get('product_name'), color="#dc3545")
                 notified_count += 1
 
         return {"success": True, "notified_count": notified_count}
@@ -406,19 +377,22 @@ def check_due_notifications():
         cursor.close()
         conn.close()
 
-def send_simple_push_notification(user_id, text_msg):
+def send_simple_push_notification(user_id, text_msg, title="📢 แจ้งเตือน", contract_number="", product_name="", color="#0d6efd"):
     try:
-        line_bot_api.push_message(user_id, TextSendMessage(text=text_msg))
+        flex_msg = build_flex_message_ui(title, text_msg, contract_number, product_name, color)
+        line_bot_api.push_message(user_id, flex_msg)
     except Exception as e:
         print(f"Error sending Simple Push Message to {user_id}: {e}")
 
-def send_line_push_notification(user_id, text_msg, installment_no, amount):
+def send_line_push_notification(user_id, text_msg, installment_no, amount, title="📢 แจ้งเตือน", contract_number="", product_name="", color="#0d6efd"):
     try:
+        flex_msg = build_flex_message_ui(title, text_msg, contract_number, product_name, color)
         quick_reply = QuickReply(items=[
             QuickReplyButton(action=MessageAction(label=f"ชำระงวดที่ {installment_no}", text=f"ชำระงวดที่ {installment_no}")),
             QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด"))
         ])
-        line_bot_api.push_message(user_id, TextSendMessage(text=text_msg, quick_reply=quick_reply))
+        flex_msg.quick_reply = quick_reply
+        line_bot_api.push_message(user_id, flex_msg)
     except Exception as e:
         print(f"Error sending Push Message to {user_id}: {e}")
 
@@ -511,17 +485,49 @@ def handle_message(event):
             installment_no = int(user_text.replace("ชำระงวดที่", "").strip())
             send_payment_qr(user_id, installment_no, event.reply_token)
         except ValueError:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="รูปแบบคำสั่งไม่ถูกต้อง"))
+            flex_msg = build_flex_message_ui("⚠️ แจ้งเตือน", "รูปแบบคำสั่งไม่ถูกต้องครับ", color="#dc3545")
+            line_bot_api.reply_message(event.reply_token, flex_msg)
     elif user_text in ["ปิดยอดก่อนกำหนด", "ปิดยอด"]:
+        notify_admin_early_close(user_id, user_text)
         send_early_close_qr(user_id, event.reply_token)
     else:
         search_contract_and_reply(user_id, user_text, event.reply_token)
+
+def notify_admin_early_close(user_id, trigger_text):
+    """ แจ้งเตือนมาทางหลังบ้านเมื่อลูกค้าพิมพ์หรือกดปุ่มปิดยอด """
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"DB Error on notify_admin_early_close: {e}")
+        return
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1", (user_id,))
+        contract = cursor.fetchone()
+        if contract:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
+            payments = cursor.fetchall()
+            unpaid_list = [p for p in payments if p['status'] != 'paid']
+            
+            bill_info = f"งวดที่เหลือ {len(unpaid_list)} งวด"
+            if unpaid_list:
+                next_p = unpaid_list[0]
+                bill_info += f" (งวดถัดไป: งวดที่ {next_p['installment_no']})"
+
+            print(f"[ADMIN NOTIFICATION] 🚨 ลูกค้าสนใจปิดยอด! สัญญาเลขที่: {contract['contract_number']} | ลูกค้า: {contract['customer_name']} ({contract['phone']}) | รายละเอียดบิล: {bill_info} | ข้อความที่ส่ง: '{trigger_text}'")
+    except Exception as e:
+        print(f"Error notifying admin for early close: {e}")
+    finally:
+        cursor.close()
+        conn.close()
 
 def search_contract_and_reply(user_id, search_term, reply_token):
     try:
         conn = get_db()
     except Exception:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล", color="#dc3545")
+        line_bot_api.reply_message(reply_token, flex_msg)
         return
 
     cursor = conn.cursor()
@@ -546,16 +552,13 @@ def search_contract_and_reply(user_id, search_term, reply_token):
 
             render_flex_contract(contract, reply_token, show_buttons=True)
         else:
-            line_bot_api.reply_message(
-                reply_token,
-                TextSendMessage(
-                    text="ไม่พบข้อมูลสัญญาจากคำค้นหาของคุณ กรุณาพิมพ์ เบอร์โทรศัพท์, เลขบัตรประชาชน หรือ ชื่อ-นามสกุล ที่ใช้ลงทะเบียนสัญญาให้ถูกต้องครับ",
-                    quick_reply=QuickReply(items=[
-                        QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด")),
-                        QuickReplyButton(action=MessageAction(label="ปิดยอดก่อนกำหนด", text="ปิดยอดก่อนกำหนด"))
-                    ])
-                )
-            )
+            body_text = "ไม่พบข้อมูลสัญญาจากคำค้นหาของคุณ กรุณาพิมพ์ เบอร์โทรศัพท์, เลขบัตรประชาชน หรือ ชื่อ-นามสกุล ที่ใช้ลงทะเบียนสัญญาให้ถูกต้องครับ"
+            flex_msg = build_flex_message_ui("🔍 ค้นหาสัญญา", body_text, color="#6c757d")
+            flex_msg.quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด")),
+                QuickReplyButton(action=MessageAction(label="ปิดยอดก่อนกำหนด", text="ปิดยอดก่อนกำหนด"))
+            ])
+            line_bot_api.reply_message(reply_token, flex_msg)
     finally:
         cursor.close()
         conn.close()
@@ -572,10 +575,9 @@ def send_contract_status(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(
-                reply_token, 
-                TextSendMessage(text="ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้\n\n💡 ท่านสามารถพิมพ์ 'เบอร์โทรศัพท์', 'เลขบัตรประชาชน' หรือ 'ชื่อ-นามสกุล' เพื่อค้นหาสัญญาของคุณได้เลยครับ")
-            )
+            body_text = "ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้\n\n💡 ท่านสามารถพิมพ์ 'เบอร์โทรศัพท์', 'เลขบัตรประชาชน' หรือ 'ชื่อ-นามสกุล' เพื่อค้นหาสัญญาของคุณได้เลยครับ"
+            flex_msg = build_flex_message_ui("ℹ️ ไม่พบสัญญา", body_text, color="#6c757d")
+            line_bot_api.reply_message(reply_token, flex_msg)
             return
 
         render_flex_contract(contract, reply_token, show_buttons=True)
@@ -595,10 +597,9 @@ def send_contract_only(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(
-                reply_token, 
-                TextSendMessage(text="ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้")
-            )
+            body_text = "ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้"
+            flex_msg = build_flex_message_ui("ℹ️ ไม่พบสัญญา", body_text, color="#6c757d")
+            line_bot_api.reply_message(reply_token, flex_msg)
             return
 
         render_flex_contract(contract, reply_token, show_buttons=False)
@@ -864,7 +865,8 @@ def send_payment_qr(user_id, installment_no, reply_token):
     try:
         conn = get_db()
     except Exception as err:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล", color="#dc3545")
+        line_bot_api.reply_message(reply_token, flex_msg)
         return
 
     cursor = conn.cursor()
@@ -873,7 +875,8 @@ def send_payment_qr(user_id, installment_no, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่"))
+            flex_msg = build_flex_message_ui("ℹ️ ไม่พบสัญญา", "ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่", color="#6c757d")
+            line_bot_api.reply_message(reply_token, flex_msg)
             return
 
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract['id'], installment_no))
@@ -892,25 +895,24 @@ def send_payment_qr(user_id, installment_no, reply_token):
         qr_url = f"{request.host_url.rstrip('/')}/qr-code/{PROMPTPAY_ID}/{amount:.2f}"
 
         msg_text = (
-            f"📱 QR Code สำหรับชำระเงินค่างวด\n"
-            f"-------------------------------\n"
-            f"📦 สินค้า: {contract['product_name']}\n"
             f"🔢 งวดที่: {installment_no}\n"
             f"📅 กำหนดชำระ: วันที่ {day_th} เดือน {month_th} พ.ศ. {year_th}\n"
             f"💰 ยอดชำระ: {amount:,.2f} บาท\n\n"
             f"สแกน QR Code ด้านล่างเพื่อชำระเงินได้ทันทีครับ"
         )
+        flex_msg = build_flex_message_ui("📱 QR Code สำหรับชำระเงินค่างวด", msg_text, contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#0d6efd")
 
         line_bot_api.reply_message(
             reply_token,
             [
-                TextSendMessage(text=msg_text),
+                flex_msg,
                 ImageSendMessage(original_content_url=qr_url, preview_image_url=qr_url)
             ]
         )
     except Exception as err:
         print(f"Error in send_payment_qr: {err}")
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้าง QR Code ชำระเงิน"))
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการสร้าง QR Code ชำระเงิน", color="#dc3545")
+        line_bot_api.reply_message(reply_token, flex_msg)
     finally:
         cursor.close()
         conn.close()
@@ -919,7 +921,8 @@ def send_early_close_qr(user_id, reply_token):
     try:
         conn = get_db()
     except Exception as err:
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล"))
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล", color="#dc3545")
+        line_bot_api.reply_message(reply_token, flex_msg)
         return
 
     cursor = conn.cursor()
@@ -928,7 +931,8 @@ def send_early_close_qr(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่"))
+            flex_msg = build_flex_message_ui("ℹ️ ไม่พบสัญญา", "ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่", color="#6c757d")
+            line_bot_api.reply_message(reply_token, flex_msg)
             return
 
         cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
@@ -938,7 +942,8 @@ def send_early_close_qr(user_id, reply_token):
         remaining_count = contract['total_installments'] - paid_count
 
         if remaining_count <= 0:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="สัญญาของคุณปิดยอดชำระเรียบร้อยแล้วครับ"))
+            flex_msg = build_flex_message_ui("ℹ️ แจ้งเตือน", "สัญญาของคุณปิดยอดชำระเรียบร้อยแล้วครับ", color="#198754")
+            line_bot_api.reply_message(reply_token, flex_msg)
             return
 
         remaining_balance = float(remaining_count * contract['installment_amount'])
@@ -946,24 +951,23 @@ def send_early_close_qr(user_id, reply_token):
         qr_url = f"{request.host_url.rstrip('/')}/qr-code/{PROMPTPAY_ID}/{discounted_close_amount:.2f}"
 
         msg_text = (
-            f"🔥 QR Code ปิดยอดสัญญาผ่อนชำระก่อนกำหนด (รับส่วนลด 15%)\n"
-            f"-------------------------------\n"
-            f"📦 สินค้า: {contract['product_name']}\n"
             f"🔢 ยอดคงเหลือ: {remaining_count} งวด ({remaining_balance:,.2f} บาท)\n"
             f"💰 ยอดสุทธิหลังหักส่วนลด: {discounted_close_amount:,.2f} บาท\n\n"
             f"สแกน QR Code ด้านล่างเพื่อชำระปิดยอดได้ทันทีครับ"
         )
+        flex_msg = build_flex_message_ui("🔥 QR Code ปิดยอดสัญญา (รับส่วนลด 15%)", msg_text, contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#fd7e14")
 
         line_bot_api.reply_message(
             reply_token,
             [
-                TextSendMessage(text=msg_text),
+                flex_msg,
                 ImageSendMessage(original_content_url=qr_url, preview_image_url=qr_url)
             ]
         )
     except Exception as err:
         print(f"Error in send_early_close_qr: {err}")
-        line_bot_api.reply_message(reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการสร้าง QR Code ปิดยอด"))
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการสร้าง QR Code ปิดยอด", color="#dc3545")
+        line_bot_api.reply_message(reply_token, flex_msg)
     finally:
         cursor.close()
         conn.close()

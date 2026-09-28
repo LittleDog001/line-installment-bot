@@ -4,11 +4,12 @@ import calendar
 import psycopg2
 import werkzeug
 import random
+import string
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
 from linebot import LineBotApi
-from linebot.models import TextSendMessage
+from linebot.models import TextSendMessage, FlexSendMessage
 
 admin_bp = Blueprint('admin', __name__)
 TH_TZ = ZoneInfo('Asia/Bangkok')
@@ -17,16 +18,71 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_AC
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 
 def generate_short_contract_number(cursor):
-    """สร้างเลขสัญญาแบบสั้น เช่น C-260928-101"""
-    now = datetime.datetime.now(TH_TZ)
-    prefix = f"C-{now.strftime('%y%m%d')}"
-    for _ in range(100):
-        rand_num = random.randint(100, 999)
-        candidate = f"{prefix}-{rand_num}"
+    """สร้างเลขสัญญาแบบสั้น: ตัวอักษร 3 ตัว + ตัวเลข 4 ตัว (เช่น ABC1234)"""
+    for _ in range(1000):
+        letters = ''.join(random.choices(string.ascii_uppercase, k=3))
+        digits = ''.join(random.choices(string.digits, k=4))
+        candidate = f"{letters}{digits}"
         cursor.execute("SELECT id FROM contracts WHERE contract_number = %s", (candidate,))
         if not cursor.fetchone():
             return candidate
-    return f"{prefix}-{now.strftime('%H%M%S')}"
+    return f"CNT{random.randint(1000, 9999)}"
+
+def build_flex_message_ui(title, body_text, contract_number="", product_name="", color="#0d6efd"):
+    """ UI กล่องข้อความแบบเดียวกับเวลาส่งให้ลูกค้าตอนพิมพ์สัญญา (ใช้ UI เดียวกันในทุกๆ ข้อความ) """
+    contents = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": color,
+            "paddingAll": "xl",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": title,
+                    "weight": "bold",
+                    "color": "#ffffff",
+                    "size": "lg",
+                    "wrap": True
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "xl",
+            "contents": []
+        }
+    }
+    
+    if contract_number or product_name:
+        header_sub = []
+        if contract_number:
+            header_sub.append({"type": "text", "text": f"เลขที่สัญญา: {contract_number}", "weight": "bold", "color": "#ffffff", "size": "md", "margin": "xs"})
+        if product_name:
+            header_sub.append({"type": "text", "text": f"สินค้า: {product_name}", "color": "#e0e0e0", "size": "xs", "margin": "xs", "wrap": True})
+        contents["header"]["contents"].extend(header_sub)
+
+    contents["body"]["contents"].append({
+        "type": "box",
+        "layout": "vertical",
+        "backgroundColor": "#f8f9fa",
+        "cornerRadius": "md",
+        "paddingAll": "md",
+        "contents": [
+            {
+                "type": "text",
+                "text": body_text,
+                "size": "sm",
+                "color": "#212529",
+                "wrap": True
+            }
+        ]
+    })
+    return FlexSendMessage(alt_text=title, contents=contents)
 
 def get_installment_due_date(created_at, due_day, installment_no):
     if isinstance(created_at, str):
@@ -52,14 +108,9 @@ def send_push_thank_you(user_id, contract_number, product_name):
     if not user_id:
         return
     try:
-        msg = (
-            f"🎉 ขอขอบพระคุณเป็นอย่างยิ่งครับ!\n"
-            f"-------------------------------\n"
-            f"📦 สินค้า: {product_name}\n"
-            f"เลขที่สัญญา: {contract_number}\n\n"
-            f"ท่านได้ดำเนินการชำระเงินและปิดยอดสัญญาครบถ้วนเรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเราครับ 🙏✨"
-        )
-        line_bot_api.push_message(user_id, TextSendMessage(text=msg))
+        body_text = "ท่านได้ดำเนินการชำระเงินและปิดยอดสัญญาครบถ้วนเรียบร้อยแล้ว ขอบคุณที่ไว้วางใจใช้บริการของเราครับ 🙏✨"
+        flex_msg = build_flex_message_ui("🎉 ขอบคุณที่ใช้บริการ", body_text, contract_number, product_name, color="#198754")
+        line_bot_api.push_message(user_id, flex_msg)
     except Exception as e:
         print(f"Error sending thank you message to {user_id}: {e}")
 
@@ -72,14 +123,9 @@ def send_push_cancellation(user_id, contract_number, product_name, contract_stat
         return
 
     try:
-        msg = (
-            f"⚠️ แจ้งเตือนสถานะสัญญาของคุณ\n"
-            f"-------------------------------\n"
-            f"📦 สินค้า: {product_name}\n"
-            f"เลขที่สัญญา: {contract_number}\n\n"
-            f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบ** เรียบร้อยแล้วครับ หากมีข้อสงสัยประการใดกรุณาติดต่อเจ้าหน้าที่ 🙏"
-        )
-        line_bot_api.push_message(user_id, TextSendMessage(text=msg))
+        body_text = "สัญญาเช่าซื้อของคุณได้ถูก ยกเลิก / ลบออกจากระบบ เรียบร้อยแล้วครับ หากมีข้อสงสัยประการใดกรุณาติดต่อเจ้าหน้าที่ 🙏"
+        flex_msg = build_flex_message_ui("⚠️ แจ้งเตือนสถานะสัญญา", body_text, contract_number, product_name, color="#dc3545")
+        line_bot_api.push_message(user_id, flex_msg)
     except Exception as e:
         print(f"Error sending cancellation message to {user_id}: {e}")
 
@@ -87,16 +133,9 @@ def send_push_contract_updated(user_id, contract_number, product_name, updated_f
     if not user_id:
         return
     try:
-        msg = (
-            f"📝 แจ้งการอัปเดตข้อมูลสัญญาของคุณ\n"
-            f"-------------------------------\n"
-            f"📦 สินค้า: {product_name}\n"
-            f"เลขที่สัญญา: {contract_number}\n\n"
-            f"ทางร้านได้ทำการแก้ไขข้อมูลสัญญาของคุณ มีรายละเอียดดังนี้:\n"
-            f"{updated_fields_text}\n\n"
-            f"หากมีข้อสงสัยประการใดสามารถติดต่อสอบถามเจ้าหน้าที่ได้เลยครับ 🙏"
-        )
-        line_bot_api.push_message(user_id, TextSendMessage(text=msg))
+        body_text = f"ทางร้านได้ทำการแก้ไขข้อมูลสัญญาของคุณ มีรายละเอียดดังนี้:\n\n{updated_fields_text}\n\nหากมีข้อสงสัยประการใดสามารถติดต่อสอบถามเจ้าหน้าที่ได้เลยครับ 🙏"
+        flex_msg = build_flex_message_ui("📝 แจ้งการอัปเดตข้อมูลสัญญา", body_text, contract_number, product_name, color="#0d6efd")
+        line_bot_api.push_message(user_id, flex_msg)
     except Exception as e:
         print(f"Error sending contract update message to {user_id}: {e}")
 
@@ -727,6 +766,48 @@ def close_contract_early_api(contract_id):
     except Exception as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/send_custom_message', methods=['POST'])
+def send_custom_message_api(contract_id):
+    """ ส่งข้อความแจ้งเตือนหาลูกค้าในแต่ละสัญญา ผ่าน LINE (ใช้ UI เดียวกัน) """
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    cursor = conn.cursor()
+    try:
+        data = request.get_json(silent=True) or request.form
+        message = (data.get('message') or '').strip()
+
+        if not message:
+            return jsonify({'error': 'กรุณาระบุข้อความที่ต้องการส่ง'}), 400
+
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+
+        line_user_id = contract.get('line_user_id')
+        if not line_user_id:
+            return jsonify({'error': 'สัญญานี้ยังไม่ได้เชื่อมต่อกับบัญชี LINE ของลูกค้า'}), 400
+
+        flex_msg = build_flex_message_ui(
+            title="💬 ข้อความจากเจ้าหน้าที่",
+            body_text=message,
+            contract_number=contract.get('contract_number'),
+            product_name=contract.get('product_name'),
+            color="#0d6efd"
+        )
+        line_bot_api.push_message(line_user_id, flex_msg)
+
+        return jsonify({'message': 'ส่งข้อความแจ้งเตือนไปยัง LINE ลูกค้าเรียบร้อยแล้ว'})
+    except Exception as e:
+        return jsonify({'error': f'ไม่สามารถส่งข้อความได้: {str(e)}'}), 500
     finally:
         cursor.close()
         conn.close()
