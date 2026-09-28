@@ -649,6 +649,8 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                 "style": "link",
                 "action": {
                     "type": "uri",
+                    "label": "📄 เปิดดูเอกสารสัญญาฉบับเต็ม",
+                    "uri": f"{request.host_url.rstrip('/')}/contract/doc/{contract['id']}"
                 }
             })
         else:
