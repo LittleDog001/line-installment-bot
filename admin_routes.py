@@ -39,7 +39,7 @@ def get_installment_due_date(created_at, due_day, installment_no):
     start_month = created_at.month
     
     # คำนวณงวดที่ 1 ให้เป็นเดือนถัดไปจากวันที่ทำสัญญา
-    target_month_index = start_month + installment_no - 1
+    target_month_index = start_month + installment_no
     target_year = start_year + (target_month_index // 12)
     target_month = (target_month_index % 12) + 1
 
