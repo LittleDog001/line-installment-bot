@@ -114,17 +114,6 @@ def send_push_thank_you(user_id, contract_number, product_name):
     except Exception as e:
         print(f"Error sending thank you message to {user_id}: {e}")
 
-def send_push_bill_paid(user_id, contract_number, product_name, installment_no, amount):
-    """ แจ้งเตือนลูกค้าผ่าน LINE เมื่อรับชำระค่างวด/บิลสำเร็จ """
-    if not user_id:
-        return
-    try:
-        body_text = f"ระบบได้รับชำระเงินสำหรับงวดที่ {installment_no} เรียบร้อยแล้วครับ\n\nยอดเงินที่ชำระ: ฿{float(amount):,.2f} บาท\nขอบคุณที่ใช้บริการครับ 🙏"
-        flex_msg = build_flex_message_ui("✅ แจ้งเตือนการชำระเงินสำเร็จ", body_text, contract_number, product_name, color="#198754")
-        line_bot_api.push_message(user_id, flex_msg)
-    except Exception as e:
-        print(f"Error sending bill paid message to {user_id}: {e}")
-
 def send_push_cancellation(user_id, contract_number, product_name, contract_status="active"):
     if not user_id:
         return
@@ -243,64 +232,6 @@ def index():
     except Exception as e:
         conn.rollback()
         return f"Error loading admin page: {str(e)}", 500
-    finally:
-        cursor.close()
-        conn.close()
-
-@admin_bp.route('/contract_document/<int:contract_id>')
-def contract_document(contract_id):
-    """ เส้นทางสำหรับดู/พิมพ์หนังสือสัญญาในฝั่งหลังบ้าน """
-    try:
-        conn = get_db()
-    except Exception as e:
-        return f"Database error: {str(e)}", 500
-
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-        contract = cursor.fetchone()
-        if not contract:
-            return "ไม่พบสัญญาที่ต้องการ", 404
-
-        c_dict = dict(contract)
-        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict.get('total_amount') else 0.0
-        c_dict['monthly_amount'] = float(c_dict['installment_amount']) if c_dict.get('installment_amount') else 0.0
-        c_dict['created_at'] = str(c_dict['created_at']) if c_dict.get('created_at') else ''
-
-        return render_template('contract_document.html', c=c_dict)
-    except Exception as e:
-        return f"Error loading contract document: {str(e)}", 500
-    finally:
-        cursor.close()
-        conn.close()
-
-@admin_bp.route('/bill/<int:payment_id>')
-def view_bill(payment_id):
-    """ เส้นทางสำหรับดูใบเสร็จรับเงิน """
-    try:
-        conn = get_db()
-    except Exception as e:
-        return f"Database error: {str(e)}", 500
-
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            SELECT p.*, c.contract_number, c.customer_name, c.phone, c.product_name, c.total_installments
-            FROM payments p
-            JOIN contracts c ON p.contract_id = c.id
-            WHERE p.id = %s
-        """, (payment_id,))
-        payment = cursor.fetchone()
-
-        if not payment:
-            return "ไม่พบข้อมูลใบเสร็จ", 404
-
-        p_dict = dict(payment)
-        p_dict['amount'] = float(p_dict['amount']) if p_dict.get('amount') else 0.0
-
-        return render_template('bill.html', p=p_dict)
-    except Exception as e:
-        return f"Error loading bill: {str(e)}", 500
     finally:
         cursor.close()
         conn.close()
@@ -688,9 +619,6 @@ def pay_contract_installment_api(contract_id):
         paid_count = sum(1 for p in all_payments if p['status'] == 'paid')
         remaining_count = contract['total_installments'] - paid_count
         remaining_amount = float(remaining_count * contract['installment_amount'])
-
-        # ส่งแจ้งเตือนรายบิลไปยัง LINE ของลูกค้า
-        send_push_bill_paid(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'), payment['installment_no'], payment['amount'])
 
         if remaining_count == 0:
             cursor.execute("UPDATE contracts SET status = 'closed' WHERE id = %s", (contract_id,))
