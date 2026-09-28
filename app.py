@@ -72,6 +72,8 @@ def init_db():
             due_day INTEGER DEFAULT 5,
             status VARCHAR(50) DEFAULT 'active',
             evidence_file TEXT,
+            requested_early_close BOOLEAN DEFAULT FALSE,
+            early_close_requested_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     ''')
@@ -81,6 +83,8 @@ def init_db():
     cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS serial_number VARCHAR(100);')
     cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS color VARCHAR(50);')
     cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS capacity VARCHAR(50);')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS requested_early_close BOOLEAN DEFAULT FALSE;')
+    cursor.execute('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS early_close_requested_at TIMESTAMP;')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
@@ -213,7 +217,7 @@ def root_api_close_contract_early(contract_id):
                 WHERE id = %s
             """, (now_str, receipt_no, p['id']))
 
-        cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
+        cursor.execute("UPDATE contracts SET status = 'closed_early', requested_early_close = FALSE WHERE id = %s", (contract_id,))
         conn.commit()
 
         if contract.get('line_user_id'):
@@ -488,7 +492,7 @@ def handle_message(event):
         search_contract_and_reply(user_id, user_text, event.reply_token)
 
 def notify_admin_early_close(user_id, trigger_text):
-    """ แจ้งเตือนมาทางหลังบ้านเมื่อลูกค้าพิมพ์หรือกดปุ่มปิดยอด """
+    """ แจ้งเตือนและอัปเดตสถานะการขอปิดยอดในระบบหลังบ้านเมื่อลูกค้ากดปิดยอด """
     try:
         conn = get_db()
     except Exception as e:
@@ -500,6 +504,14 @@ def notify_admin_early_close(user_id, trigger_text):
         cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1", (user_id,))
         contract = cursor.fetchone()
         if contract:
+            now_time = datetime.datetime.now(TH_TZ)
+            cursor.execute("""
+                UPDATE contracts 
+                SET requested_early_close = TRUE, early_close_requested_at = %s 
+                WHERE id = %s
+            """, (now_time, contract['id']))
+            conn.commit()
+
             cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
             payments = cursor.fetchall()
             unpaid_list = [p for p in payments if p['status'] != 'paid']
@@ -663,7 +675,6 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
         is_reclaim = contract['status'] == 'reclaim'
 
         if not show_buttons:
-            # แก้ไม่ต้องมีปุ่มดูสัญญาในหน้าของลูกค้า
             pass
         else:
             if is_cancelled:
@@ -715,7 +726,6 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                     "wrap": True
                 })
 
-        # ดีไซน์ Flex Message ในรูปแบบทันสมัยสไตล์การ์ดดิจิทัล
         body_contents = [
             {
                 "type": "box",
@@ -833,7 +843,6 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
             }
         ]
 
-        # เพิ่มการแสดงหลักฐานสัญญาหากมีการเพิ่มหลักฐานสัญญาจากหลังบ้านเข้ามา
         if contract.get('evidence_file'):
             evidence_url = f"{request.host_url.rstrip('/')}/static/uploads/{contract['evidence_file']}"
             body_contents.append({

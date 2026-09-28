@@ -504,16 +504,17 @@ def process_contract_detail_api(contract_id):
             return jsonify({'message': 'แก้ไขสัญญาและจัดการหลักฐานสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
-            # แก้ไข: ส่งแจ้งเตือนการลบสัญญาเข้า LINE ของลูกค้าก่อนจะลบสัญญาออกจากฐานข้อมูล
+            # แก้ไข: หากปิดยอดไปแล้ว ไม่ต้องส่งข้อความแจ้งเตือนไปที่แชทของลูกค้า
             line_user_id = contract.get('line_user_id')
             contract_number = contract.get('contract_number', '')
             product_name = contract.get('product_name', '')
-            
+            contract_status = contract.get('status', '')
+
             cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
             conn.commit()
 
-            if line_user_id:
-                send_push_cancellation(line_user_id, contract_number, product_name, contract.get('status'))
+            if line_user_id and contract_status not in ['closed', 'closed_early']:
+                send_push_cancellation(line_user_id, contract_number, product_name, contract_status)
 
             return jsonify({'message': 'ลบสัญญาสำเร็จเรียบร้อยแล้ว', 'contract_id': contract_id})
 
@@ -557,7 +558,7 @@ def get_contract_detail_api(contract_id):
 
 @admin_bp.route('/contract_document/<int:contract_id>', methods=['GET'])
 def get_contract_document(contract_id):
-    """ แก้ไข: Route เปิดดูเอกสารหนังสือสัญญาในระบบหลังบ้าน """
+    """ Route เปิดดูเอกสารหนังสือสัญญาในระบบหลังบ้าน """
     try:
         conn = get_db()
     except Exception as e:
@@ -759,6 +760,11 @@ def unpay_contract_installment_api(contract_id):
     finally:
         cursor.close()
         conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+def handle_unpay_contract_installment_api(contract_id):
+    return unpay_contract_installment_api(contract_id)
 
 @admin_bp.route('/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
 @admin_bp.route('/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])

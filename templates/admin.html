@@ -166,7 +166,7 @@
             </div>
         </div>
 
-        <!-- Section: Early Closed Bills Alert Box (เพิ่มใหม่: UI แจ้งเตือนบิลที่ปิดยอดก่อนกำหนด) -->
+        <!-- Section: Early Closed Bills Alert Box ( UI แจ้งเตือนบิลที่ปิดยอดก่อนกำหนด) -->
         <div class="row g-4 mb-4" id="earlyClosedAlertContainer" style="display: none;">
             <div class="col-12">
                 <div class="card card-custom p-4 bg-white border-start border-info border-5 shadow-sm">
@@ -317,63 +317,59 @@
                         <div class="mb-2">
                             <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-calculator me-1"></i>รูปแบบการตั้งราคางวด</label>
                             <select id="calc_type" class="form-select mb-2" onchange="toggleCalcType()">
-                                <option value="auto">คำนวณยอดต่องวดอัตโนมัติ (ใส่ยอดรวม)</option>
-                                <option value="custom">กำหนดจำนวนงวดและราคาต่องวดเอง</option>
+                                <option value="auto">คำนวณยอดต่องวดจาก ยอดจัดผ่อนรวม</option>
+                                <option value="manual">ระบุ ยอดผ่อนต่องวด โดยตรง</option>
                             </select>
                         </div>
 
                         <div class="row g-2 mb-2">
-                            <div class="col-6" id="box_total_amount">
-                                <label class="form-label small text-muted">ยอดผ่อนรวม (บาท)</label>
-                                <input type="number" step="0.01" id="total_amount" class="form-control" placeholder="45000" oninput="autoCalcInstallment()">
+                            <div class="col-6" id="totalAmountBox">
+                                <label class="form-label small text-muted">ยอดจัดผ่อนรวม (บาท)</label>
+                                <input type="number" step="0.01" id="total_amount" class="form-control" placeholder="เช่น 30000">
+                            </div>
+                            <div class="col-6" id="installmentAmountBox" style="display:none;">
+                                <label class="form-label small text-muted">ยอดผ่อนต่องวด (บาท)</label>
+                                <input type="number" step="0.01" id="installment_amount" class="form-control" placeholder="เช่น 2500">
                             </div>
                             <div class="col-6">
-                                <label class="form-label small text-muted">จำนวนงวดทั้งหมด</label>
-                                <input type="number" id="total_installments" class="form-control" placeholder="12" required oninput="autoCalcInstallment()">
+                                <label class="form-label small text-muted">จำนวนงวดผ่อน</label>
+                                <input type="number" id="total_installments" class="form-control" placeholder="เช่น 12" required>
                             </div>
                         </div>
 
-                        <div class="mb-2" id="box_installment_amount" style="display: none;">
-                            <label class="form-label small text-muted">ราคาที่ต้องชำระแต่ละงวด (บาท)</label>
-                            <input type="number" step="0.01" id="installment_amount" class="form-control" placeholder="3750" oninput="autoCalcTotal()">
+                        <div class="mb-3">
+                            <label class="form-label small text-muted">LINE User ID (หากผูกบัญชีแล้ว)</label>
+                            <input type="text" id="line_user_id" class="form-control" placeholder="เช่น U1234567890abcdef...">
                         </div>
-
-                        <button type="submit" class="btn btn-primary w-100 fw-bold mt-3"><i class="fa-solid fa-save me-1"></i> บันทึกสัญญา</button>
+                        <button type="submit" class="btn btn-primary w-100 fw-bold">
+                            <i class="fa-solid fa-floppy-disk me-1"></i> บันทึกสร้างสัญญา
+                        </button>
                     </form>
                 </div>
             </div>
 
-            <!-- Table Card: Contracts Management -->
+            <!-- Table Card: Contracts List -->
             <div class="col-lg-8">
                 <div class="card card-custom p-4 bg-white">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list-check text-primary me-2"></i>รายการสัญญาทั้งหมด</h5>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="loadContracts()"><i class="fa-solid fa-rotate-right me-1"></i> รีเฟรช</button>
+                        <h5 class="fw-bold text-dark mb-0"><i class="fa-solid fa-list text-primary me-2"></i>รายการสัญญาทั้งหมด</h5>
+                        <input type="text" id="searchInput" class="form-control form-control-sm w-50" placeholder="🔍 ค้นหา ชื่อ, เบอร์, เลขสัญญา, สินค้า..." onkeyup="filterContracts()">
                     </div>
-
-                    <!-- ช่องค้นหาสัญญาในหน้าหลังบ้าน -->
-                    <div class="mb-3">
-                        <div class="input-group">
-                            <span class="input-group-text bg-white text-muted"><i class="fa-solid fa-magnifying-glass"></i></span>
-                            <input type="text" id="searchContractInput" class="form-control" placeholder="ค้นหาด้วย ชื่อ-สกุล, เลขที่สัญญา, เบอร์โทร หรือ เลขบัตรประชาชน..." onkeyup="filterContracts()">
-                        </div>
-                    </div>
-
+                    
                     <div class="table-responsive">
                         <table class="table table-hover align-middle" id="contractsTable">
                             <thead class="table-light">
                                 <tr class="small text-muted">
-                                    <th>สัญญา/ลูกค้า</th>
-                                    <th>สินค้า/รายละเอียดเครื่อง/หลักฐาน</th>
-                                    <th>งวดชำระ/กำหนด</th>
-                                    <th>วันที่ทำสัญญา</th>
+                                    <th>เลขสัญญา / ลูกค้า</th>
+                                    <th>สินค้า / IMEI</th>
+                                    <th>ยอดรวม / งวด</th>
+                                    <th>ความคืบหน้า</th>
                                     <th>สถานะ</th>
-                                    <th class="text-center">จัดการงวด</th>
-                                    <th class="text-center">เครื่องมือ</th>
+                                    <th class="text-center">จัดการ</th>
                                 </tr>
                             </thead>
-                            <tbody id="contractsTableBody">
-                                <!-- Data rows rendered via JS -->
+                            <tbody id="contractTableBody">
+                                <!-- JavaScript render rows -->
                             </tbody>
                         </table>
                     </div>
@@ -382,17 +378,80 @@
         </div>
     </div>
 
-    <!-- Modal: Edit Contract & Add/Update Evidence -->
-    <div class="modal fade" id="editModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content card-custom">
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="fw-bold"><i class="fa-solid fa-pen-to-square text-primary me-2"></i>แก้ไขข้อมูลสัญญา / จัดการหลักฐาน</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    <!-- Modal 1: Manage Contract & Installments -->
+    <div class="modal fade" id="manageModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold" id="manageModalTitle"><i class="fa-solid fa-receipt me-2"></i>รายละเอียดสัญญา</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body">
+                <div class="modal-body p-4">
+                    <div class="row g-3 mb-4 p-3 bg-light rounded" id="contractSummaryBox">
+                        <!-- Render details -->
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark"><i class="fa-solid fa-money-bill-transfer me-2"></i>ตารางรายการงวดผ่อนชำระ</h6>
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-sm btn-success fw-bold" onclick="payNextInstallment()">
+                                <i class="fa-solid fa-check-circle me-1"></i>บันทึกชำระงวดถัดไป
+                            </button>
+                            <button type="button" class="btn btn-sm btn-warning text-dark fw-bold" onclick="unpayLastInstallment()">
+                                <i class="fa-solid fa-rotate-left me-1"></i>ยกเลิกการชำระงวดล่าสุด
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary fw-bold" onclick="closeEarlyContract()">
+                                <i class="fa-solid fa-bolt me-1"></i>ปิดยอดทั้งหมด (รับส่วนลด 15%)
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead class="table-light text-center small">
+                                <tr>
+                                    <th>งวดที่</th>
+                                    <th>ยอดเงิน</th>
+                                    <th>สถานะ</th>
+                                    <th>วันที่ชำระ</th>
+                                    <th>เลขที่ใบเสร็จ</th>
+                                    <th>ใบเสร็จ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="paymentHistoryBody">
+                                <!-- Payment history rows -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <!-- Custom Message Notification Panel -->
+                    <div class="card p-3 bg-light border-0">
+                        <h6 class="fw-bold text-dark mb-2"><i class="fa-solid fa-paper-plane text-primary me-2"></i>ส่งข้อความแจ้งเตือนหาลูกค้า (LINE)</h6>
+                        <div class="input-group">
+                            <input type="text" id="customNotificationText" class="form-control" placeholder="พิมพ์ข้อความ เช่น แจ้งเตือนยอดค้างชำระ หรือโปรโมชั่น...">
+                            <button class="btn btn-primary fw-bold" type="button" onclick="sendCustomNotification()">
+                                <i class="fa-solid fa-paper-plane me-1"></i> ส่งข้อความ
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal 2: Edit Contract Info -->
+    <div class="modal fade" id="editContractModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header bg-secondary text-white">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-pen-to-square me-2"></i>แก้ไขข้อมูลสัญญา</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
                     <form id="editContractForm" enctype="multipart/form-data">
-                        <input type="hidden" id="edit_id">
+                        <input type="hidden" id="edit_contract_id">
                         <div class="mb-2">
                             <label class="form-label small text-muted">ชื่อ-นามสกุล ลูกค้า</label>
                             <input type="text" id="edit_customer_name" class="form-control" required>
@@ -402,22 +461,20 @@
                             <input type="text" id="edit_phone" class="form-control" required>
                         </div>
                         <div class="mb-2">
-                            <label class="form-label small text-muted">เลขบัตรประชาชน (13 หลัก)</label>
-                            <input type="text" id="edit_id_card" class="form-control" maxlength="13">
+                            <label class="form-label small text-muted">เลขบัตรประชาชน</label>
+                            <input type="text" id="edit_id_card" class="form-control">
                         </div>
                         <div class="mb-2">
                             <label class="form-label small text-muted">รุ่นสินค้า</label>
                             <input type="text" id="edit_product_name" class="form-control" required>
                         </div>
-
-                        <!-- แก้ไข IMEI, Serial, สี, ความจุ -->
                         <div class="row g-2 mb-2">
                             <div class="col-6">
-                                <label class="form-label small text-muted">หมายเลขเครื่อง (IMEI)</label>
+                                <label class="form-label small text-muted">IMEI</label>
                                 <input type="text" id="edit_imei" class="form-control">
                             </div>
                             <div class="col-6">
-                                <label class="form-label small text-muted">หมายเลขซีเรียล (Serial No.)</label>
+                                <label class="form-label small text-muted">Serial Number</label>
                                 <input type="text" id="edit_serial_number" class="form-control">
                             </div>
                         </div>
@@ -427,570 +484,637 @@
                                 <input type="text" id="edit_color" class="form-control">
                             </div>
                             <div class="col-6">
-                                <label class="form-label small text-muted">ความจุหน่วยความจำ (Capacity)</label>
+                                <label class="form-label small text-muted">ความจุ</label>
                                 <input type="text" id="edit_capacity" class="form-control">
                             </div>
                         </div>
-
-                        <div class="mb-3">
-                            <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>เพิ่ม/เปลี่ยนหลักฐานการทำสัญญา (ทีหลัง)</label>
-                            <input type="file" id="edit_evidence_file" class="form-control" accept="image/*,.pdf">
-                            <div id="currentEvidenceInfo" class="form-text small mt-1"></div>
+                        <div class="mb-2">
+                            <label class="form-label small text-muted">LINE User ID</label>
+                            <input type="text" id="edit_line_user_id" class="form-control">
                         </div>
-
-                        <button type="submit" class="btn btn-success w-100 fw-bold mt-2"><i class="fa-solid fa-circle-check me-1"></i> บันทึกการแก้ไข</button>
+                        <div class="mb-3">
+                            <label class="form-label small text-muted fw-bold text-primary"><i class="fa-solid fa-file-arrow-up me-1"></i>อัปเดตหลักฐานสัญญา (เลือกใหม่เมื่อต้องการเปลี่ยน)</label>
+                            <input type="file" id="edit_evidence_file" class="form-control" accept="image/*,.pdf">
+                        </div>
+                        <button type="submit" class="btn btn-secondary w-100 fw-bold">
+                            <i class="fa-solid fa-floppy-disk me-1"></i> บันทึกการแก้ไข
+                        </button>
                     </form>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Modal: Payment History -->
-    <div class="modal fade" id="historyModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content card-custom">
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="fw-bold"><i class="fa-solid fa-clock-rotate-left text-primary me-2"></i>ประวัติการชำระ (<span id="modalContractNum"></span>)</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <ul class="list-group list-group-flush" id="historyList">
-                        <!-- History items rendered via JS -->
-                    </ul>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal: Send LINE Custom Message -->
-    <div class="modal fade" id="lineNotifyModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content card-custom">
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="fw-bold text-primary"><i class="fa-brands fa-line me-2"></i>ส่งข้อความแจ้งเตือนไปที่ LINE ลูกค้า</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <input type="hidden" id="notify_contract_id">
-                    <div class="mb-2">
-                        <label class="form-label small text-muted">สัญญา / ลูกค้า:</label>
-                        <div id="notify_customer_info" class="fw-bold text-dark mb-2"></div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small text-muted">พิมพ์ข้อความแจ้งเตือนที่ต้องการส่ง:</label>
-                        <textarea id="notify_message" class="form-control" rows="4" placeholder="ระบุข้อความ เช่น แจ้งเตือนการชำระเงิน, นัดหมาย หรือสอบถามเพิ่มเติม..." required></textarea>
-                    </div>
-                    <button type="button" class="btn btn-primary w-100 fw-bold" onclick="submitLineMessage()"><i class="fa-paper-plane fa-solid me-1"></i> ส่งข้อความทันที</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <style>
-        @media (min-width: 768px) {
-            .col-md-2-4 {
-                flex: 0 0 auto;
-                width: 20%;
-            }
-        }
-    </style>
-
-    <!-- Bootstrap 5 JS Bundle -->
+    <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
-        let editModalObj = null;
-        let historyModalObj = null;
-        let lineNotifyModalObj = null;
-        let globalContractsData = [];
+        let contractsData = [];
+        let currentContract = null;
 
-        document.addEventListener('DOMContentLoaded', () => {
-            editModalObj = new bootstrap.Modal(document.getElementById('editModal'));
-            historyModalObj = new bootstrap.Modal(document.getElementById('historyModal'));
-            lineNotifyModalObj = new bootstrap.Modal(document.getElementById('lineNotifyModal'));
-            loadContracts();
-            toggleCalcType();
+        const THAI_MONTHS = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+
+        document.addEventListener("DOMContentLoaded", () => {
+            loadContractsData();
+
+            document.getElementById("addContractForm").addEventListener("submit", handleAddContract);
+            document.getElementById("editContractForm").addEventListener("submit", handleEditContract);
         });
-
-        function filterContracts() {
-            const input = document.getElementById("searchContractInput");
-            const filter = input.value.toLowerCase().replace(/[- ]/g, '');
-            const table = document.getElementById("contractsTable");
-            const tr = table.getElementsByTagName("tr");
-
-            for (let i = 1; i < tr.length; i++) {
-                const td = tr[i].getElementsByTagName("td")[0];
-                if (td) {
-                    const txtValue = td.textContent || td.innerText;
-                    const cleanTxt = txtValue.toLowerCase().replace(/[- ]/g, '');
-                    if (cleanTxt.indexOf(filter) > -1) {
-                        tr[i].style.display = "";
-                    } else {
-                        tr[i].style.display = "none";
-                    }
-                }
-            }
-        }
 
         function toggleCalcType() {
-            const calcType = document.getElementById('calc_type').value;
-            const boxTotal = document.getElementById('box_total_amount');
-            const boxInstallment = document.getElementById('box_installment_amount');
-
-            if (calcType === 'custom') {
-                boxInstallment.style.display = 'block';
-                document.getElementById('installment_amount').setAttribute('required', 'true');
-                document.getElementById('total_amount').removeAttribute('required');
+            const type = document.getElementById("calc_type").value;
+            if (type === "auto") {
+                document.getElementById("totalAmountBox").style.display = "block";
+                document.getElementById("installmentAmountBox").style.display = "none";
+                document.getElementById("installment_amount").value = "";
             } else {
-                boxInstallment.style.display = 'none';
-                document.getElementById('installment_amount').removeAttribute('required');
-                document.getElementById('total_amount').setAttribute('required', 'true');
+                document.getElementById("totalAmountBox").style.display = "none";
+                document.getElementById("installmentAmountBox").style.display = "block";
+                document.getElementById("total_amount").value = "";
             }
         }
 
-        function autoCalcTotal() {
-            const calcType = document.getElementById('calc_type').value;
-            if (calcType === 'custom') {
-                const count = parseFloat(document.getElementById('total_installments').value) || 0;
-                const pricePerMonth = parseFloat(document.getElementById('installment_amount').value) || 0;
-                if (count > 0 && pricePerMonth > 0) {
-                    document.getElementById('total_amount').value = (count * pricePerMonth).toFixed(2);
-                }
-            }
-        }
-
-        function autoCalcInstallment() {
-            const calcType = document.getElementById('calc_type').value;
-            if (calcType === 'auto') {
-                const total = parseFloat(document.getElementById('total_amount').value) || 0;
-                const count = parseFloat(document.getElementById('total_installments').value) || 0;
-                if (total > 0 && count > 0) {
-                    document.getElementById('installment_amount').value = (total / count).toFixed(2);
-                }
-            }
-        }
-
-        document.getElementById('addContractForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData();
-            formData.append('customer_name', document.getElementById('customer_name').value);
-            formData.append('phone', document.getElementById('phone').value);
-            formData.append('id_card', document.getElementById('id_card').value);
-            formData.append('product_name', document.getElementById('product_name').value);
-            formData.append('imei', document.getElementById('imei').value);
-            formData.append('serial_number', document.getElementById('serial_number').value);
-            formData.append('color', document.getElementById('color').value);
-            formData.append('capacity', document.getElementById('capacity').value);
-            formData.append('total_amount', document.getElementById('total_amount').value);
-            formData.append('total_installments', document.getElementById('total_installments').value);
-            formData.append('installment_amount', document.getElementById('installment_amount').value);
-
-            const evidenceInput = document.getElementById('evidence_file');
-            if (evidenceInput.files[0]) {
-                formData.append('evidence_file', evidenceInput.files[0]);
-            }
-
+        async function loadContractsData() {
             try {
-                const res = await fetch('/admin/contract/create', {
-                    method: 'POST',
-                    body: formData
-                });
-                if (res.ok) {
-                    alert('บันทึกสัญญาสำเร็จ');
-                    document.getElementById('addContractForm').reset();
-                    loadContracts();
-                } else {
-                    const errText = await res.text();
-                    alert('เกิดข้อผิดพลาด: ' + errText);
-                }
-            } catch (err) {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
-            }
-        });
-
-        async function loadContracts() {
-            try {
-                const res = await fetch('/admin/api/contracts');
-                if (!res.ok) return;
-                const contracts = await res.json();
-                globalContractsData = contracts;
-
-                let totalContracts = contracts.length;
-                let activeContracts = 0;
-                let overdue2Contracts = 0;
-                let reclaimContracts = 0;
-                let totalPaid = 0;
-
-                const tbody = document.getElementById('contractsTableBody');
-                tbody.innerHTML = '';
-
-                const unpaidTbody = document.getElementById('unpaidBillsTableBody');
-                unpaidTbody.innerHTML = '';
-                let unpaidCount = 0;
-
-                const reclaimTbody = document.getElementById('reclaimBillsTableBody');
-                reclaimTbody.innerHTML = '';
-                let reclaimCount = 0;
-
-                const earlyClosedTbody = document.getElementById('earlyClosedBillsTableBody');
-                earlyClosedTbody.innerHTML = '';
-                let earlyClosedCount = 0;
-
-                contracts.forEach(c => {
-                    if (c.status === 'active' || c.status === 'overdue_1') activeContracts++;
-                    if (c.status === 'overdue_2') overdue2Contracts++;
-                    if (c.status === 'reclaim') reclaimContracts++;
-
-                    const paidSum = c.payments ? c.payments.filter(p => p.status === 'paid').reduce((sum, p) => sum + parseFloat(p.amount || 0), 0) : 0;
-                    totalPaid += paidSum;
-
-                    // แสดงเฉพาะบิลค้างชำระในรอบถัดไปเพียง 1 บิลต่อสัญญา
-                    if (c.status !== 'closed' && c.status !== 'closed_early' && c.status !== 'cancelled' && c.payments) {
-                        const unpaidPayments = c.payments.filter(p => p.status !== 'paid');
-                        if (unpaidPayments.length > 0) {
-                            const nextP = unpaidPayments[0]; // ดึงบิลถัดไปงวดเดียว
-                            unpaidCount++;
-
-                            const unpaidTr = document.createElement('tr');
-                            unpaidTr.innerHTML = `
-                                <td>
-                                    <div class="fw-bold">${c.customer_name}</div>
-                                    <small class="text-muted">สัญญา: ${c.contract_number}</small>
-                                </td>
-                                <td>${c.product_name}</td>
-                                <td><span class="badge bg-secondary">งวดที่ ${nextP.installment_no}/${c.total_installments}</span></td>
-                                <td>
-                                    ${c.status === 'overdue_2' ? '<span class="badge bg-warning text-dark">ค้างชำระ 2 งวด</span>' : 
-                                      c.status === 'reclaim' ? '<span class="badge bg-danger">เรียกคืนเครื่อง</span>' : 
-                                      '<span class="badge bg-info text-dark">รอชำระงวดถัดไป</span>'}
-                                </td>
-                                <td class="fw-bold text-primary">฿${parseFloat(nextP.amount || c.installment_amount).toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
-                                <td>ทุกวันที่ ${c.due_day} ของเดือน</td>
-                                <td class="text-center">
-                                    <button class="btn btn-sm btn-success fw-bold" onclick="payInstallment(${c.id}, ${nextP.installment_no})"><i class="fa-solid fa-check me-1"></i>รับชำระ</button>
-                                </td>
-                            `;
-                            unpaidTbody.appendChild(unpaidTr);
-                        }
-                    }
-
-                    // แสดงรายการบิลที่ลูกค้ากดหรือพิมพ์ปิดยอดก่อนกำหนด (closed_early)
-                    if (c.status === 'closed_early') {
-                        earlyClosedCount++;
-                        const earlyTr = document.createElement('tr');
-                        earlyTr.innerHTML = `
-                            <td>
-                                <div class="fw-bold text-primary">${c.customer_name}</div>
-                                <small class="text-muted">สัญญา: ${c.contract_number}</small>
-                            </td>
-                            <td>${c.phone || '-'}</td>
-                            <td>${c.product_name}</td>
-                            <td><span class="badge bg-success">${c.paid_count}/${c.total_installments} งวด</span></td>
-                            <td class="fw-bold text-success">฿${(c.close_with_discount || 0).toLocaleString('th-TH', {minimumFractionDigits:2})}</td>
-                            <td><span class="badge badge-status-closed"><i class="fa-solid fa-bolt me-1"></i>ปิดยอดก่อนกำหนดแล้ว</span></td>
-                            <td class="text-center">
-                                <button class="btn btn-sm btn-outline-secondary me-1" onclick="viewHistory(${c.id}, '${c.contract_number}')"><i class="fa-solid fa-history me-1"></i>ประวัติบิล</button>
-                                <a href="/admin/contract_document/${c.id}" target="_blank" class="btn btn-sm btn-outline-dark"><i class="fa-solid fa-file-lines me-1"></i>ดูสัญญา</a>
-                            </td>
-                        `;
-                        earlyClosedTbody.appendChild(earlyTr);
-                    }
-
-                    if (c.status === 'overdue_2' || c.status === 'reclaim') {
-                        reclaimCount++;
-                        const recTr = document.createElement('tr');
-                        recTr.innerHTML = `
-                            <td>
-                                <div class="fw-bold text-danger">${c.customer_name}</div>
-                                <small class="text-muted">สัญญา: ${c.contract_number}</small>
-                            </td>
-                            <td>${c.phone || '-'}</td>
-                            <td>${c.product_name}</td>
-                            <td><span class="badge bg-danger">${c.overdue_count || 2} งวด</span></td>
-                            <td>
-                                ${c.status === 'reclaim' ? '<span class="badge bg-danger">เรียกคืนเครื่อง (ค้าง 3+)</span>' : '<span class="badge bg-warning text-dark">เตือนค้างชำระครั้งที่ 2</span>'}
-                            </td>
-                            <td class="text-center">
-                                <button class="btn btn-sm btn-outline-primary me-1" onclick="openLineNotifyModal(${c.id}, '${c.customer_name}', '${c.contract_number}')"><i class="fa-brands fa-line me-1"></i>ทวงถาม</button>
-                                <button class="btn btn-sm btn-warning" onclick="payInstallment(${c.id})"><i class="fa-solid fa-hand-holding-dollar me-1"></i>รับชำระ</button>
-                            </td>
-                        `;
-                        reclaimTbody.appendChild(recTr);
-                    }
-
-                    let statusBadge = '';
-                    if (c.status === 'active') statusBadge = '<span class="badge badge-status-active">ปกติ</span>';
-                    else if (c.status === 'overdue_1') statusBadge = '<span class="badge badge-status-overdue1">ค้าง 1 งวด</span>';
-                    else if (c.status === 'overdue_2') statusBadge = '<span class="badge badge-status-overdue2">ค้าง 2 งวด</span>';
-                    else if (c.status === 'reclaim') statusBadge = '<span class="badge badge-status-reclaim">เรียกคืนเครื่อง</span>';
-                    else if (c.status === 'closed' || c.status === 'closed_early') statusBadge = '<span class="badge badge-status-closed">ปิดยอดแล้ว</span>';
-                    else if (c.status === 'cancelled') statusBadge = '<span class="badge badge-status-cancelled">ยกเลิก</span>';
-
-                    let evidenceBtn = c.evidence_file 
-                        ? `<a href="/static/uploads/${c.evidence_file}" target="_blank" class="btn btn-sm btn-outline-info p-1 py-0 ms-1" title="ดูหลักฐาน"><i class="fa-solid fa-file-image"></i></a>`
-                        : '';
-
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td>
-                            <div class="fw-bold">${c.customer_name}</div>
-                            <small class="text-muted">${c.contract_number} | Tel: ${c.phone}</small>
-                        </td>
-                        <td>
-                            <div>${c.product_name} ${evidenceBtn}</div>
-                            <small class="text-muted">IMEI/SN: ${c.imei || c.serial_number || '-'} | ${c.color || '-'} ${c.capacity || ''}</small>
-                        </td>
-                        <td>
-                            <div class="fw-bold text-primary">${c.paid_count}/${c.total_installments} งวด</div>
-                            <small class="text-muted">฿${c.installment_amount.toLocaleString()}/งวด (ทุกวันที่ ${c.due_day})</small>
-                        </td>
-                        <td><small>${c.created_at_formatted}</small></td>
-                        <td>${statusBadge}</td>
-                        <td class="text-center">
-                            <div class="btn-group action-btn-group">
-                                <button class="btn btn-sm btn-success" onclick="payInstallment(${c.id})" title="บันทึกรับชำระ"><i class="fa-solid fa-plus"></i></button>
-                                <button class="btn btn-sm btn-warning" onclick="unpayInstallment(${c.id})" title="ยกเลิกการรับชำระ"><i class="fa-solid fa-rotate-left"></i></button>
-                                <button class="btn btn-sm btn-info text-white" onclick="closeEarly(${c.id})" title="ปิดยอดก่อนกำหนด"><i class="fa-solid fa-bolt"></i> ปิดยอด</button>
-                            </div>
-                        </td>
-                        <td class="text-center">
-                            <div class="btn-group action-btn-group">
-                                <a href="/admin/contract_document/${c.id}" target="_blank" class="btn btn-sm btn-outline-dark" title="ดูสัญญา"><i class="fa-solid fa-file-lines"></i> ดูสัญญา</a>
-                                <button class="btn btn-sm btn-outline-primary" onclick="openLineNotifyModal(${c.id}, '${c.customer_name}', '${c.contract_number}')" title="ส่ง LINE"><i class="fa-brands fa-line"></i></button>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="viewHistory(${c.id}, '${c.contract_number}')" title="ประวัติการชำระ"><i class="fa-solid fa-history"></i></button>
-                                <button class="btn btn-sm btn-outline-warning" onclick="openEditModal(${c.id})" title="แก้ไขสัญญา"><i class="fa-solid fa-pen"></i></button>
-                                <button class="btn btn-sm btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา"><i class="fa-solid fa-trash"></i></button>
-                            </div>
-                        </td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-
-                document.getElementById('statTotalContracts').innerText = totalContracts;
-                document.getElementById('statActiveContracts').innerText = activeContracts;
-                document.getElementById('statOverdue2Contracts').innerText = overdue2Contracts;
-                document.getElementById('statReclaimContracts').innerText = reclaimContracts;
-                document.getElementById('statTotalPaid').innerText = '฿' + totalPaid.toLocaleString('th-TH', {minimumFractionDigits:2});
-
-                document.getElementById('unpaidBillsBadge').innerText = unpaidCount + ' รายการ';
-                document.getElementById('reclaimBillsBadge').innerText = reclaimCount + ' รายการ';
-                document.getElementById('earlyClosedBillsBadge').innerText = earlyClosedCount + ' รายการ';
-
-                if (earlyClosedCount > 0) {
-                    document.getElementById('earlyClosedAlertContainer').style.display = 'block';
-                } else {
-                    document.getElementById('earlyClosedAlertContainer').style.display = 'none';
-                }
-
-                if (reclaimCount > 0) {
-                    document.getElementById('reclaimAlertContainer').style.display = 'block';
-                } else {
-                    document.getElementById('reclaimAlertContainer').style.display = 'none';
-                }
-
+                const res = await fetch("/admin/api/contracts");
+                if (!res.ok) throw new Error("Failed to load contracts");
+                contractsData = await res.json();
+                renderDashboardStats();
+                renderContractsTable(contractsData);
+                renderUnpaidBillsTable(contractsData);
+                renderReclaimBillsTable(contractsData);
+                renderEarlyClosedBillsTable(contractsData);
             } catch (err) {
                 console.error("Error loading contracts:", err);
             }
         }
 
-        async function payInstallment(contractId, installmentNo = null) {
-            if (!confirm('ยืนยันการรับชำระเงินงวดนี้?')) return;
+        function renderDashboardStats() {
+            const total = contractsData.length;
+            const active = contractsData.filter(c => c.status === 'active' || c.status === 'overdue_1').length;
+            const overdue2 = contractsData.filter(c => c.status === 'overdue_2').length;
+            const reclaim = contractsData.filter(c => c.status === 'reclaim').length;
+
+            let totalPaid = 0;
+            let dueThisMonthCount = 0;
+            let paidThisMonthCount = 0;
+            let dueAmountThisMonth = 0;
+            let paidAmountThisMonth = 0;
+
+            const now = new Date();
+            const currentMonth = now.getMonth() + 1;
+            const currentYear = now.getFullYear();
+
+            contractsData.forEach(c => {
+                const payments = c.payments || [];
+                payments.forEach(p => {
+                    const instAmt = parseFloat(p.amount || c.installment_amount || 0);
+                    if (p.status === 'paid') {
+                        totalPaid += instAmt;
+                    }
+
+                    // คำนวณวันกำหนดชำระของงวด
+                    const dueDate = getInstallmentDueDateJS(c.created_at, c.due_day || 5, p.installment_no);
+                    if (dueDate.getMonth() + 1 === currentMonth && dueDate.getFullYear() === currentYear) {
+                        dueThisMonthCount++;
+                        dueAmountThisMonth += instAmt;
+                        if (p.status === 'paid') {
+                            paidThisMonthCount++;
+                            paidAmountThisMonth += instAmt;
+                        }
+                    }
+                });
+            });
+
+            document.getElementById("statTotalContracts").innerText = total;
+            document.getElementById("statActiveContracts").innerText = active;
+            document.getElementById("statOverdue2Contracts").innerText = overdue2;
+            document.getElementById("statReclaimContracts").innerText = reclaim;
+            document.getElementById("statTotalPaid").innerText = `฿${totalPaid.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+
+            document.getElementById("statDueThisMonth").innerText = dueThisMonthCount;
+            document.getElementById("statPaidThisMonth").innerText = paidThisMonthCount;
+            document.getElementById("statDueAmountThisMonth").innerText = `฿${dueAmountThisMonth.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+            document.getElementById("statPaidAmountThisMonth").innerText = `฿${paidAmountThisMonth.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+        }
+
+        function getInstallmentDueDateJS(createdAtStr, dueDay, installmentNo) {
+            let createdDate = new Date();
+            if (createdAtStr) {
+                createdDate = new Date(createdAtStr);
+            }
+            let year = createdDate.getFullYear();
+            let month = createdDate.getMonth(); // 0-based
+
+            let targetMonthIndex = month + installmentNo;
+            let targetYear = year + Math.floor(targetMonthIndex / 12);
+            let targetMonth = targetMonthIndex % 12;
+
+            let lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+            let actualDay = Math.min(dueDay || 5, lastDay);
+
+            return new Date(targetYear, targetMonth, actualDay);
+        }
+
+        function renderContractsTable(data) {
+            const tbody = document.getElementById("contractTableBody");
+            tbody.innerHTML = "";
+
+            data.forEach(c => {
+                const paidCount = c.paid_count || 0;
+                const totalInst = c.total_installments || 0;
+                const totalAmt = parseFloat(c.total_amount || 0);
+
+                let statusBadge = "";
+                if (c.status === 'active') statusBadge = '<span class="badge badge-status-active">ปกติ (Active)</span>';
+                else if (c.status === 'overdue_1') statusBadge = '<span class="badge badge-status-overdue1">ค้างชำระครั้งที่ 1</span>';
+                else if (c.status === 'overdue_2') statusBadge = '<span class="badge badge-status-overdue2">ค้างชำระครั้งที่ 2</span>';
+                else if (c.status === 'reclaim') statusBadge = '<span class="badge badge-status-reclaim">เรียกเครื่องคืน</span>';
+                else if (c.status === 'closed' || c.status === 'closed_early') statusBadge = '<span class="badge badge-status-closed">ปิดยอดแล้ว</span>';
+                else if (c.status === 'cancelled') statusBadge = '<span class="badge badge-status-cancelled">ยกเลิกสัญญา</span>';
+                else statusBadge = `<span class="badge bg-secondary">${c.status}</span>`;
+
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>
+                        <div class="fw-bold text-primary">${c.contract_number}</div>
+                        <div class="small text-dark">${c.customer_name}</div>
+                        <div class="small text-muted"><i class="fa-solid fa-phone me-1"></i>${c.phone || '-'}</div>
+                    </td>
+                    <td>
+                        <div class="fw-bold">${c.product_name}</div>
+                        <div class="small text-muted">IMEI: ${c.imei || c.serial_number || '-'}</div>
+                        <div class="small text-muted">${c.color || '-'} / ${c.capacity || '-'}</div>
+                    </td>
+                    <td>
+                        <div class="fw-bold text-dark">฿${totalAmt.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
+                        <div class="small text-muted">งวดละ ฿${parseFloat(c.installment_amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
+                    </td>
+                    <td>
+                        <div class="fw-bold text-primary">${paidCount} / ${totalInst} งวด</div>
+                        <div class="progress mt-1" style="height: 6px;">
+                            <div class="progress-bar bg-primary" style="width: ${(paidCount/totalInst)*100}%"></div>
+                        </div>
+                    </td>
+                    <td>${statusBadge}</td>
+                    <td class="text-center action-btn-group">
+                        <button class="btn btn-sm btn-outline-primary me-1" onclick="openManageModal(${c.id})" title="จัดการบิลชำระ">
+                            <i class="fa-solid fa-receipt"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="openContractDocument(${c.id})" title="ดูหนังสือสัญญา">
+                            <i class="fa-solid fa-file-contract"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning me-1" onclick="openEditModal(${c.id})" title="แก้ไขข้อมูล">
+                            <i class="fa-solid fa-pen"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteContract(${c.id})" title="ลบสัญญา">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        /* 1. แก้ไขในรายการบิลให้ขึ้นแสดงวันที่ต้องชำระในแต่ละงวดเป็น วันที่ เดือน และปี แทนการขึ้นว่าทุกวันที่เท่าไหร่ทุกเดือน */
+        function renderUnpaidBillsTable(data) {
+            const tbody = document.getElementById("unpaidBillsTableBody");
+            tbody.innerHTML = "";
+            let count = 0;
+
+            data.forEach(c => {
+                if (['closed', 'closed_early', 'cancelled'].includes(c.status)) return;
+
+                const payments = c.payments || [];
+                const unpaidPayments = payments.filter(p => p.status !== 'paid');
+
+                if (unpaidPayments.length > 0) {
+                    const nextP = unpaidPayments[0];
+                    count++;
+
+                    const dueDateObj = getInstallmentDueDateJS(c.created_at, c.due_day || 5, nextP.installment_no);
+                    const day = dueDateObj.getDate();
+                    const monthTh = THAI_MONTHS[dueDateObj.getMonth() + 1];
+                    const yearTh = dueDateObj.getFullYear() + 543;
+                    const formattedDueDate = `วันที่ ${day} เดือน ${monthTh} พ.ศ. ${yearTh}`;
+
+                    const amount = parseFloat(nextP.amount || c.installment_amount || 0);
+
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `
+                        <td>
+                            <div class="fw-bold text-primary">${c.contract_number}</div>
+                            <div class="small text-dark">${c.customer_name}</div>
+                        </td>
+                        <td>
+                            <div class="fw-bold text-dark">${c.product_name}</div>
+                            <div class="small text-muted">${c.phone || '-'}</div>
+                        </td>
+                        <td><span class="badge bg-secondary">งวดที่ ${nextP.installment_no} / ${c.total_installments}</span></td>
+                        <td><span class="badge bg-warning text-dark">${c.status === 'active' ? 'รอดำเนินการชำระ' : 'เกินกำหนดชำระ'}</span></td>
+                        <td class="fw-bold text-danger">฿${amount.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+                        <td class="fw-bold text-primary">${formattedDueDate}</td>
+                        <td class="text-center">
+                            <button class="btn btn-sm btn-success fw-bold" onclick="paySpecificInstallment(${c.id}, ${nextP.installment_no})">
+                                <i class="fa-solid fa-check me-1"></i>รับชำระ
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+            });
+
+            document.getElementById("unpaidBillsBadge").innerText = `${count} รายการ`;
+        }
+
+        /* 2. UI การแจ้งเตือนหากลูกค้ากดปิดยอดให้แจ้งเตือนมาที่หลังบ้านเพื่อตรวจสอบ */
+        function renderEarlyClosedBillsTable(data) {
+            const tbody = document.getElementById("earlyClosedBillsTableBody");
+            const container = document.getElementById("earlyClosedAlertContainer");
+            tbody.innerHTML = "";
+            let count = 0;
+
+            data.forEach(c => {
+                if (c.requested_early_close || c.status === 'closed_early') {
+                    count++;
+                    const paidCount = c.paid_count || 0;
+                    const remCount = c.total_installments - paidCount;
+                    const remAmt = parseFloat(c.installment_amount || 0) * remCount;
+                    const closeAmt = remAmt * 0.85;
+
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `
+                        <td>
+                            <div class="fw-bold text-info">${c.contract_number}</div>
+                            <div class="small text-dark">${c.customer_name}</div>
+                        </td>
+                        <td><div class="small text-dark">${c.phone || '-'}</div></td>
+                        <td><div class="small text-dark">${c.product_name}</div></td>
+                        <td><span class="badge bg-light text-dark border">${paidCount} / ${c.total_installments} งวด</span></td>
+                        <td class="fw-bold text-success">฿${closeAmt.toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+                        <td>
+                            ${c.status === 'closed_early' 
+                                ? '<span class="badge bg-success">ปิดสัญญาเรียบร้อย</span>' 
+                                : '<span class="badge bg-warning text-dark"><i class="fa-solid fa-bell me-1"></i>ลูกค้าขอปิดยอด (รอตรวจสอบ)</span>'}
+                        </td>
+                        <td class="text-center">
+                            ${c.status !== 'closed_early' ? `
+                                <button class="btn btn-sm btn-info text-white fw-bold me-1" onclick="closeEarlyContractDirect(${c.id})">
+                                    <i class="fa-solid fa-check me-1"></i>อนุมัติปิดยอด
+                                </button>
+                            ` : '-'}
+                            <button class="btn btn-sm btn-outline-primary" onclick="openManageModal(${c.id})">
+                                <i class="fa-solid fa-eye"></i>
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+            });
+
+            document.getElementById("earlyClosedBillsBadge").innerText = `${count} รายการ`;
+            if (count > 0) {
+                container.style.display = "block";
+            } else {
+                container.style.display = "none";
+            }
+        }
+
+        function renderReclaimBillsTable(data) {
+            const tbody = document.getElementById("reclaimBillsTableBody");
+            const container = document.getElementById("reclaimAlertContainer");
+            tbody.innerHTML = "";
+            let count = 0;
+
+            data.forEach(c => {
+                if (['overdue_2', 'reclaim'].includes(c.status)) {
+                    count++;
+                    const overdueText = c.overdue_installments_text || "ค้างชำระเกินกำหนด";
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `
+                        <td>
+                            <div class="fw-bold text-danger">${c.contract_number}</div>
+                            <div class="small text-dark">${c.customer_name}</div>
+                        </td>
+                        <td><div class="small text-dark">${c.phone || '-'}</div></td>
+                        <td><div class="small text-dark">${c.product_name}</div></td>
+                        <td><span class="badge bg-danger">${overdueText}</span></td>
+                        <td>
+                            ${c.status === 'reclaim' 
+                                ? '<span class="badge bg-danger">🚨 เรียกคืนเครื่องด่วน (ค้าง 3+ งวด)</span>' 
+                                : '<span class="badge bg-warning text-dark">⚠️ เฝ้าระวัง (ค้าง 2 งวด)</span>'}
+                        </td>
+                        <td class="text-center">
+                            <button class="btn btn-sm btn-primary me-1" onclick="openManageModal(${c.id})">
+                                <i class="fa-solid fa-receipt me-1"></i>จัดการบิล
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+            });
+
+            document.getElementById("reclaimBillsBadge").innerText = `${count} รายการ`;
+            if (count > 0) {
+                container.style.display = "block";
+            } else {
+                container.style.display = "none";
+            }
+        }
+
+        function filterContracts() {
+            const query = document.getElementById("searchInput").value.toLowerCase();
+            const filtered = contractsData.filter(c => {
+                return (c.customer_name && c.customer_name.toLowerCase().includes(query)) ||
+                       (c.phone && c.phone.includes(query)) ||
+                       (c.contract_number && c.contract_number.toLowerCase().includes(query)) ||
+                       (c.product_name && c.product_name.toLowerCase().includes(query));
+            });
+            renderContractsTable(filtered);
+        }
+
+        async function handleAddContract(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append("customer_name", document.getElementById("customer_name").value);
+            formData.append("phone", document.getElementById("phone").value);
+            formData.append("id_card", document.getElementById("id_card").value);
+            formData.append("product_name", document.getElementById("product_name").value);
+            formData.append("imei", document.getElementById("imei").value);
+            formData.append("serial_number", document.getElementById("serial_number").value);
+            formData.append("color", document.getElementById("color").value);
+            formData.append("capacity", document.getElementById("capacity").value);
+            formData.append("total_amount", document.getElementById("total_amount").value);
+            formData.append("installment_amount", document.getElementById("installment_amount").value);
+            formData.append("total_installments", document.getElementById("total_installments").value);
+            formData.append("line_user_id", document.getElementById("line_user_id").value);
+
+            const fileInput = document.getElementById("evidence_file");
+            if (fileInput.files.length > 0) {
+                formData.append("evidence_file", fileInput.files[0]);
+            }
+
+            try {
+                const res = await fetch("/admin/contract/create", { method: "POST", body: formData });
+                if (res.ok) {
+                    alert("บันทึกสร้างสัญญาสำเร็จเรียบร้อยแล้ว");
+                    document.getElementById("addContractForm").reset();
+                    loadContractsData();
+                } else {
+                    const errText = await res.text();
+                    alert(" เกิดข้อผิดพลาด: " + errText);
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
+            }
+        }
+
+        async function openManageModal(contractId) {
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}`);
+                if (!res.ok) throw new Error("Contract not found");
+                currentContract = await res.json();
+
+                document.getElementById("manageModalTitle").innerHTML = `<i class="fa-solid fa-receipt me-2"></i>รายละเอียดสัญญา: ${currentContract.contract_number}`;
+
+                const summaryBox = document.getElementById("contractSummaryBox");
+                summaryBox.innerHTML = `
+                    <div class="col-md-6">
+                        <div class="fw-bold text-primary">${currentContract.customer_name} (${currentContract.phone || '-'})</div>
+                        <div class="small text-muted">เลขบัตรประชาชน: ${currentContract.id_card || '-'}</div>
+                        <div class="small text-muted">สินค้า: ${currentContract.product_name} (${currentContract.color || '-'} / ${currentContract.capacity || '-'})</div>
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <div class="fw-bold text-dark">ยอดผ่อนรวม: ฿${parseFloat(currentContract.total_amount).toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
+                        <div class="small text-muted">ผ่อน ${currentContract.paid_count}/${currentContract.total_installments} งวด (งวดละ ฿${parseFloat(currentContract.installment_amount).toLocaleString('th-TH', {minimumFractionDigits: 2})})</div>
+                        <div class="small fw-bold text-danger">คงเหลือ: ฿${parseFloat(currentContract.remaining_amount).toLocaleString('th-TH', {minimumFractionDigits: 2})} (ปิดยอดลดเหลือ ฿${parseFloat(currentContract.close_with_discount).toLocaleString('th-TH', {minimumFractionDigits: 2})})</div>
+                    </div>
+                `;
+
+                const historyBody = document.getElementById("paymentHistoryBody");
+                historyBody.innerHTML = "";
+
+                (currentContract.payments || []).forEach(p => {
+                    const tr = document.createElement("tr");
+                    tr.className = "text-center";
+                    tr.innerHTML = `
+                        <td class="fw-bold">${p.installment_no}</td>
+                        <td>฿${parseFloat(p.amount || currentContract.installment_amount).toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+                        <td>${p.status === 'paid' ? '<span class="badge bg-success">ชำระแล้ว</span>' : '<span class="badge bg-warning text-dark">ค้างชำระ</span>'}</td>
+                        <td>${p.paid_at || '-'}</td>
+                        <td>${p.receipt_no || '-'}</td>
+                        <td>
+                            ${p.status === 'paid' ? `
+                                <a href="/bill/${p.id}" target="_blank" class="btn btn-xs btn-outline-primary">
+                                    <i class="fa-solid fa-print me-1"></i>พิมพ์บิล
+                                </a>
+                            ` : '-'}
+                        </td>
+                    `;
+                    historyBody.appendChild(tr);
+                });
+
+                const modal = new bootstrap.Modal(document.getElementById("manageModal"));
+                modal.show();
+            } catch (err) {
+                alert("ไม่สามารถโหลดข้อมูลสัญญาได้");
+            }
+        }
+
+        async function payNextInstallment() {
+            if (!currentContract) return;
+            try {
+                const res = await fetch(`/admin/api/contracts/${currentContract.id}/pay`, { method: "POST" });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    openManageModal(currentContract.id);
+                    loadContractsData();
+                } else {
+                    alert("ข้อผิดพลาด: " + data.error);
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการบันทึกการชำระเงิน");
+            }
+        }
+
+        async function paySpecificInstallment(contractId, installmentNo) {
             try {
                 const res = await fetch(`/admin/api/contracts/${contractId}/pay`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ installment_no: installmentNo })
                 });
                 const data = await res.json();
                 if (res.ok) {
                     alert(data.message);
-                    loadContracts();
+                    loadContractsData();
                 } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
+                    alert("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                alert("เกิดข้อผิดพลาดในการชำระเงิน");
             }
         }
 
-        async function unpayInstallment(contractId) {
-            if (!confirm('ยืนยันการยกเลิกการชำระงวดล่าสุด?')) return;
+        /* 2. แก้ไขปุ่มยกเลิกการชำระงวดล่าสุดไม่ทำงาน */
+        async function unpayLastInstallment() {
+            if (!currentContract) return;
+            if (!confirm("คุณต้องการยกเลิกการชำระเงินในงวดล่าสุดใช่หรือไม่?")) return;
+
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}/unpay`, {
-                    method: 'POST'
-                });
+                const res = await fetch(`/admin/api/contracts/${currentContract.id}/unpay`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
                     alert(data.message);
-                    loadContracts();
+                    openManageModal(currentContract.id);
+                    loadContractsData();
                 } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
+                    alert("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                alert("เกิดข้อผิดพลาดในการยกเลิกการชำระเงิน");
             }
         }
 
-        async function closeEarly(contractId) {
-            if (!confirm('คุณต้องการปิดยอดสัญญานี้ก่อนกำหนดใช่หรือไม่? (ส่วนลดปิดยอดจะถูกนำไปคำนวณ)')) return;
+        async function closeEarlyContract() {
+            if (!currentContract) return;
+            if (!confirm("ยืนยันการบันทึกปิดยอดสัญญาก่อนกำหนดพร้อมส่วนลดใช่หรือไม่?")) return;
+
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}/close_early`, {
-                    method: 'POST'
-                });
+                const res = await fetch(`/admin/api/contracts/${currentContract.id}/close_early`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert('ปิดยอดสัญญาเรียบร้อยแล้ว');
-                    loadContracts();
+                    alert(data.message);
+                    openManageModal(currentContract.id);
+                    loadContractsData();
                 } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
+                    alert("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                alert("เกิดข้อผิดพลาดในการปิดยอด");
             }
         }
 
-        async function viewHistory(contractId, contractNumber) {
-            document.getElementById('modalContractNum').innerText = contractNumber;
-            const historyList = document.getElementById('historyList');
-            historyList.innerHTML = '<li class="list-group-item text-center">กำลังโหลดข้อมูล...</li>';
-            historyModalObj.show();
-
+        async function closeEarlyContractDirect(contractId) {
+            if (!confirm("ยืนยันอนุมัติการปิดยอดสัญญาใช่หรือไม่?")) return;
             try {
-                const res = await fetch(`/admin/api/payments/${contractId}`);
-                if (!res.ok) return;
-                const payments = await res.json();
-
-                historyList.innerHTML = '';
-                payments.forEach(p => {
-                    const isPaid = p.status === 'paid';
-                    const li = document.createElement('li');
-                    li.className = 'list-group-item d-flex justify-content-between align-items-center';
-                    li.innerHTML = `
-                        <div>
-                            <div class="fw-bold">งวดที่ ${p.installment_no} - ฿${parseFloat(p.amount).toLocaleString('th-TH', {minimumFractionDigits:2})}</div>
-                            <small class="text-muted">${isPaid ? 'ชำระเมื่อ: ' + (p.paid_at || '-') : 'สถานะ: ยังไม่ได้ชำระ'}</small>
-                        </div>
-                        <div>
-                            ${isPaid ? `<span class="badge bg-success me-1">ชำระแล้ว</span><a href="/admin/bill/${p.id}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="fa-solid fa-print"></i> บิล</a>` : '<span class="badge bg-secondary">รอดำเนินการ</span>'}
-                        </div>
-                    `;
-                    historyList.appendChild(li);
-                });
-            } catch (err) {
-                historyList.innerHTML = '<li class="list-group-item text-danger text-center">ไม่สามารถโหลดประวัติได้</li>';
-            }
-        }
-
-        function openEditModal(contractId) {
-            const contract = globalContractsData.find(c => c.id === contractId);
-            if (!contract) return;
-
-            document.getElementById('edit_id').value = contract.id;
-            document.getElementById('edit_customer_name').value = contract.customer_name || '';
-            document.getElementById('edit_phone').value = contract.phone || '';
-            document.getElementById('edit_id_card').value = contract.id_card || '';
-            document.getElementById('edit_product_name').value = contract.product_name || '';
-            document.getElementById('edit_imei').value = contract.imei || '';
-            document.getElementById('edit_serial_number').value = contract.serial_number || '';
-            document.getElementById('edit_color').value = contract.color || '';
-            document.getElementById('edit_capacity').value = contract.capacity || '';
-
-            const evidenceInfo = document.getElementById('currentEvidenceInfo');
-            if (contract.evidence_file) {
-                evidenceInfo.innerHTML = `ไฟล์ปัจจุบัน: <a href="/static/uploads/${contract.evidence_file}" target="_blank" class="text-primary">${contract.evidence_file}</a>`;
-            } else {
-                evidenceInfo.innerText = 'ยังไม่มีการอัปโหลดไฟล์หลักฐาน';
-            }
-
-            editModalObj.show();
-        }
-
-        document.getElementById('editContractForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const contractId = document.getElementById('edit_id').value;
-            const formData = new FormData();
-            formData.append('customer_name', document.getElementById('edit_customer_name').value);
-            formData.append('phone', document.getElementById('edit_phone').value);
-            formData.append('id_card', document.getElementById('edit_id_card').value);
-            formData.append('product_name', document.getElementById('edit_product_name').value);
-            formData.append('imei', document.getElementById('edit_imei').value);
-            formData.append('serial_number', document.getElementById('edit_serial_number').value);
-            formData.append('color', document.getElementById('edit_color').value);
-            formData.append('capacity', document.getElementById('edit_capacity').value);
-
-            const fileInput = document.getElementById('edit_evidence_file');
-            if (fileInput.files[0]) {
-                formData.append('evidence_file', fileInput.files[0]);
-            }
-
-            try {
-                const res = await fetch(`/admin/api/contracts/${contractId}`, {
-                    method: 'PUT',
-                    body: formData
-                });
+                const res = await fetch(`/admin/api/contracts/${contractId}/close_early`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert('บันทึกการแก้ไขเรียบร้อยแล้ว');
-                    editModalObj.hide();
-                    loadContracts();
+                    alert(data.message);
+                    loadContractsData();
                 } else {
-                    alert(data.error || 'เกิดข้อผิดพลาดในการแก้ไข');
+                    alert("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
-            }
-        });
-
-        async function deleteContract(contractId) {
-            if (!confirm('คุณแน่ใจหรือว่าต้องการลบสัญญานี้? การดำเนินการนี้จะไม่สามารถยกเลิกได้')) return;
-            try {
-                const res = await fetch(`/admin/api/contracts/${contractId}`, {
-                    method: 'DELETE'
-                });
-                const data = await res.json();
-                if (res.ok) {
-                    alert('ลบสัญญาเรียบร้อยแล้ว');
-                    loadContracts();
-                } else {
-                    alert(data.error || 'เกิดข้อผิดพลาด');
-                }
-            } catch (err) {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                alert("เกิดข้อผิดพลาดในการปิดยอด");
             }
         }
 
-        function openLineNotifyModal(contractId, customerName, contractNumber) {
-            document.getElementById('notify_contract_id').value = contractId;
-            document.getElementById('notify_customer_info').innerText = `${customerName} (${contractNumber})`;
-            document.getElementById('notify_message').value = '';
-            lineNotifyModalObj.show();
-        }
-
-        async function submitLineMessage() {
-            const contractId = document.getElementById('notify_contract_id').value;
-            const message = document.getElementById('notify_message').value.trim();
-
+        async function sendCustomNotification() {
+            if (!currentContract) return;
+            const message = document.getElementById("customNotificationText").value.trim();
             if (!message) {
-                alert('กรุณาระบุข้อความที่ต้องการส่ง');
+                alert("กรุณาระบุข้อความที่ต้องการส่ง");
                 return;
             }
 
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}/send_custom_message`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message })
+                const res = await fetch(`/admin/api/contracts/${currentContract.id}/send_custom_message`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message })
                 });
                 const data = await res.json();
                 if (res.ok) {
                     alert(data.message);
-                    lineNotifyModalObj.hide();
+                    document.getElementById("customNotificationText").value = "";
                 } else {
-                    alert(data.error || 'ไม่สามารถส่งข้อความได้');
+                    alert("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert('เกิดข้อผิดพลาดในการเชื่อมต่อ');
+                alert("เกิดข้อผิดพลาดในการส่งข้อความ");
             }
+        }
+
+        async function openEditModal(contractId) {
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}`);
+                if (!res.ok) throw new Error("Contract not found");
+                const c = await res.json();
+
+                document.getElementById("edit_contract_id").value = c.id;
+                document.getElementById("edit_customer_name").value = c.customer_name || "";
+                document.getElementById("edit_phone").value = c.phone || "";
+                document.getElementById("edit_id_card").value = c.id_card || "";
+                document.getElementById("edit_product_name").value = c.product_name || "";
+                document.getElementById("edit_imei").value = c.imei || "";
+                document.getElementById("edit_serial_number").value = c.serial_number || "";
+                document.getElementById("edit_color").value = c.color || "";
+                document.getElementById("edit_capacity").value = c.capacity || "";
+                document.getElementById("edit_line_user_id").value = c.line_user_id || "";
+
+                const modal = new bootstrap.Modal(document.getElementById("editContractModal"));
+                modal.show();
+            } catch (err) {
+                alert("ไม่สามารถเปิดหน้าแก้ไขสัญญาได้");
+            }
+        }
+
+        async function handleEditContract(e) {
+            e.preventDefault();
+            const contractId = document.getElementById("edit_contract_id").value;
+            const formData = new FormData();
+            formData.append("customer_name", document.getElementById("edit_customer_name").value);
+            formData.append("phone", document.getElementById("edit_phone").value);
+            formData.append("id_card", document.getElementById("edit_id_card").value);
+            formData.append("product_name", document.getElementById("edit_product_name").value);
+            formData.append("imei", document.getElementById("edit_imei").value);
+            formData.append("serial_number", document.getElementById("edit_serial_number").value);
+            formData.append("color", document.getElementById("edit_color").value);
+            formData.append("capacity", document.getElementById("edit_capacity").value);
+            formData.append("line_user_id", document.getElementById("edit_line_user_id").value);
+
+            const fileInput = document.getElementById("edit_evidence_file");
+            if (fileInput.files.length > 0) {
+                formData.append("evidence_file", fileInput.files[0]);
+            }
+
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}`, { method: "PUT", body: formData });
+                if (res.ok) {
+                    alert("แก้ไขข้อมูลสัญญาเรียบร้อยแล้ว");
+                    bootstrap.Modal.getInstance(document.getElementById("editContractModal")).hide();
+                    loadContractsData();
+                } else {
+                    const data = await res.json();
+                    alert("ข้อผิดพลาด: " + (data.error || "ไม่สามารถแก้ไขข้อมูลได้"));
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
+            }
+        }
+
+        async function deleteContract(contractId) {
+            if (!confirm("คุณแน่ใจหรือว่าต้องการลบสัญญานี้? ข้อมูลบิลชำระเงินทั้งหมดจะถูกลบทันที")) return;
+
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}`, { method: "DELETE" });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    loadContractsData();
+                } else {
+                    alert("ข้อผิดพลาด: " + data.error);
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการลบสัญญา");
+            }
+        }
+
+        function openContractDocument(contractId) {
+            window.open(`/admin/contract_document/${contractId}`, '_blank');
         }
     </script>
 </body>
