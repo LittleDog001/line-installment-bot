@@ -94,8 +94,8 @@ def get_installment_due_date(created_at, due_day, installment_no):
     start_year = created_at.year
     start_month = created_at.month
     
-    # คำนวณงวดที่ 1 ให้เป็นเดือนถัดไปจากวันที่ทำสัญญา
-    target_month_index = start_month + installment_no
+    # แก้ไข: คำนวณงวดที่ 1 ให้ตรงกับเดือนที่ทำสัญญาจริง (ไม่งวดแรกบวกเกินไป 1 เดือน)
+    target_month_index = (start_month - 1) + (installment_no - 1)
     target_year = start_year + (target_month_index // 12)
     target_month = (target_month_index % 12) + 1
 
@@ -115,7 +115,6 @@ def send_push_thank_you(user_id, contract_number, product_name):
         print(f"Error sending thank you message to {user_id}: {e}")
 
 def send_push_cancellation(user_id, contract_number, product_name, contract_status="active"):
-    """ แก้ไข: ส่งข้อความแจ้งเตือนเมื่อสัญญาถูกลบในระบบหลังบ้านไปยัง LINE ลูกค้า """
     if not user_id:
         return
     try:
@@ -134,6 +133,17 @@ def send_push_contract_updated(user_id, contract_number, product_name, updated_f
         line_bot_api.push_message(user_id, flex_msg)
     except Exception as e:
         print(f"Error sending contract update message to {user_id}: {e}")
+
+def send_push_payment_notification(user_id, contract_number, product_name, installment_no, amount, paid_at):
+    """ เพิ่มระบบแจ้งเตือนเวลาลูกค้าชำระเงินเป็นรายงวดเข้า LINE ของลูกค้า """
+    if not user_id:
+        return
+    try:
+        body_text = f"ได้รับการชำระเงินค่างวดเรียบร้อยแล้วครับ\n\n🔢 งวดที่: {installment_no}\n💰 จำนวนเงิน: {amount:,.2f} บาท\n📅 วันที่ชำระ: {paid_at}\n\nขอบคุณที่ใช้บริการครับ 🙏✨"
+        flex_msg = build_flex_message_ui("✅ แจ้งการชำระเงินค่างวดสำเร็จ", body_text, contract_number, product_name, color="#198754")
+        line_bot_api.push_message(user_id, flex_msg)
+    except Exception as e:
+        print(f"Error sending payment notification to {user_id}: {e}")
 
 def get_db():
     db_url = os.environ.get('DATABASE_URL')
@@ -162,15 +172,14 @@ def calculate_contract_overdue_status(cursor, c_dict):
             if days_overdue >= 7:
                 overdue_7d_flag = True
 
-    # ปรับสถานะสัญญาตามจำนวนการค้างชำระ
     new_status = c_dict.get('status', 'active')
     if c_dict.get('status') not in ['closed', 'closed_early', 'cancelled']:
         if overdue_count >= 3:
-            new_status = 'reclaim' # เรียกคืนเครื่อง
+            new_status = 'reclaim'
         elif overdue_count == 2:
-            new_status = 'overdue_2' # ค้างชำระครั้งที่ 2
+            new_status = 'overdue_2'
         elif overdue_count == 1:
-            new_status = 'overdue_1' # ค้างชำระครั้งที่ 1
+            new_status = 'overdue_1'
         else:
             new_status = 'active'
             
@@ -504,7 +513,6 @@ def process_contract_detail_api(contract_id):
             return jsonify({'message': 'แก้ไขสัญญาและจัดการหลักฐานสำเร็จ', 'contract_id': contract_id})
 
         elif request.method == 'DELETE':
-            # แก้ไข: หากปิดยอดไปแล้ว ไม่ต้องส่งข้อความแจ้งเตือนไปที่แชทของลูกค้า
             line_user_id = contract.get('line_user_id')
             contract_number = contract.get('contract_number', '')
             product_name = contract.get('product_name', '')
@@ -558,7 +566,6 @@ def get_contract_detail_api(contract_id):
 
 @admin_bp.route('/contract_document/<int:contract_id>', methods=['GET'])
 def get_contract_document(contract_id):
-    """ Route เปิดดูเอกสารหนังสือสัญญาในระบบหลังบ้าน """
     try:
         conn = get_db()
     except Exception as e:
@@ -588,7 +595,6 @@ def get_contract_document(contract_id):
 
 @admin_bp.route('/bill/<int:payment_id>', methods=['GET'])
 def get_bill_document(payment_id):
-    """ Route เปิดดูใบเสร็จรับเงินในระบบหลังบ้าน """
     try:
         conn = get_db()
     except Exception as e:
@@ -686,6 +692,16 @@ def pay_contract_installment_api(contract_id):
             cursor.execute("UPDATE contracts SET status = 'closed' WHERE id = %s", (contract_id,))
             conn.commit()
             send_push_thank_you(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
+        else:
+            # เพิ่มระบบส่งการแจ้งเตือนการชำระเงินเป็นรายงวดเข้า LINE ของลูกค้า
+            send_push_payment_notification(
+                contract.get('line_user_id'), 
+                contract.get('contract_number'), 
+                contract.get('product_name'), 
+                payment['installment_no'], 
+                float(payment['amount']), 
+                now_str
+            )
 
         return jsonify({
             'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว',
@@ -818,7 +834,7 @@ def close_contract_early_api(contract_id):
                 WHERE id = %s
             """, (now_str, receipt_no, p['id']))
 
-        cursor.execute("UPDATE contracts SET status = 'closed_early' WHERE id = %s", (contract_id,))
+        cursor.execute("UPDATE contracts SET status = 'closed_early', requested_early_close = FALSE WHERE id = %s", (contract_id,))
         conn.commit()
 
         send_push_thank_you(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
@@ -831,9 +847,10 @@ def close_contract_early_api(contract_id):
         cursor.close()
         conn.close()
 
-@admin_bp.route('/api/contracts/<int:contract_id>/send_custom_message', methods=['POST'])
-def send_custom_message_api(contract_id):
-    """ ส่งข้อความแจ้งเตือนหาลูกค้าในแต่ละสัญญา ผ่าน LINE (ใช้ UI เดียวกัน) """
+@admin_bp.route('/api/contracts/<int:contract_id>/reject_early_close', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/reject_early_close', methods=['POST', 'PUT'])
+def reject_early_close_api(contract_id):
+    """ เพิ่มฟังก์ชันรองรับการปฏิเสธการขอปิดยอดก่อนกำหนด """
     try:
         conn = get_db()
     except Exception as e:
@@ -841,34 +858,28 @@ def send_custom_message_api(contract_id):
 
     cursor = conn.cursor()
     try:
-        data = request.get_json(silent=True) or request.form
-        message = (data.get('message') or '').strip()
-
-        if not message:
-            return jsonify({'error': 'กรุณาระบุข้อความที่ต้องการส่ง'}), 400
-
         cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
         contract = cursor.fetchone()
 
         if not contract:
             return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
 
+        cursor.execute("UPDATE contracts SET requested_early_close = FALSE WHERE id = %s", (contract_id,))
+        conn.commit()
+
         line_user_id = contract.get('line_user_id')
-        if not line_user_id:
-            return jsonify({'error': 'สัญญานี้ยังไม่ได้เชื่อมต่อกับบัญชี LINE ของลูกค้า'}), 400
+        if line_user_id:
+            reject_msg = "การขอปิดยอดก่อนกำหนดของคุณไม่ได้รับการอนุมัติ หากมีข้อสงสัยกรุณาติดต่อเจ้าหน้าที่ครับ"
+            flex_msg = build_flex_message_ui("❌ ไม่อนุมัติการขอปิดยอด", reject_msg, contract.get('contract_number'), contract.get('product_name'), color="#dc3545")
+            try:
+                line_bot_api.push_message(line_user_id, flex_msg)
+            except Exception as e:
+                print(f"Error sending reject notification: {e}")
 
-        flex_msg = build_flex_message_ui(
-            title="💬 ข้อความจากเจ้าหน้าที่",
-            body_text=message,
-            contract_number=contract.get('contract_number'),
-            product_name=contract.get('product_name'),
-            color="#0d6efd"
-        )
-        line_bot_api.push_message(line_user_id, flex_msg)
-
-        return jsonify({'message': 'ส่งข้อความแจ้งเตือนไปยัง LINE ลูกค้าเรียบร้อยแล้ว'})
+        return jsonify({'message': 'ปฏิเสธการปิดยอดสัญญาเรียบร้อยแล้ว'})
     except Exception as e:
-        return jsonify({'error': f'ไม่สามารถส่งข้อความได้: {str(e)}'}), 500
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
     finally:
         cursor.close()
         conn.close()

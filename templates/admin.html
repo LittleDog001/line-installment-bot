@@ -606,7 +606,8 @@
             let year = createdDate.getFullYear();
             let month = createdDate.getMonth(); // 0-based
 
-            let targetMonthIndex = month + installmentNo;
+            // แก้ไข: ปรับการคำนวณงวดแรกไม่ให้บวกเดือนเพิ่ม เพื่อให้ตรงกับหลังบ้าน
+            let targetMonthIndex = month + (installmentNo - 1);
             let targetYear = year + Math.floor(targetMonthIndex / 12);
             let targetMonth = targetMonthIndex % 12;
 
@@ -676,7 +677,6 @@
             });
         }
 
-        /* 1. แก้ไขในรายการบิลให้ขึ้นแสดงวันที่ต้องชำระในแต่ละงวดเป็น วันที่ เดือน และปี แทนการขึ้นว่าทุกวันที่เท่าไหร่ทุกเดือน */
         function renderUnpaidBillsTable(data) {
             const tbody = document.getElementById("unpaidBillsTableBody");
             tbody.innerHTML = "";
@@ -727,7 +727,6 @@
             document.getElementById("unpaidBillsBadge").innerText = `${count} รายการ`;
         }
 
-        /* 2. UI การแจ้งเตือนหากลูกค้ากดปิดยอดให้แจ้งเตือนมาที่หลังบ้านเพื่อตรวจสอบ */
         function renderEarlyClosedBillsTable(data) {
             const tbody = document.getElementById("earlyClosedBillsTableBody");
             const container = document.getElementById("earlyClosedAlertContainer");
@@ -761,6 +760,10 @@
                             ${c.status !== 'closed_early' ? `
                                 <button class="btn btn-sm btn-info text-white fw-bold me-1" onclick="closeEarlyContractDirect(${c.id})">
                                     <i class="fa-solid fa-check me-1"></i>อนุมัติปิดยอด
+                                </button>
+                                <!-- เพิ่มปุ่มไม่อนุมัติปิดยอดข้างๆ ปุ่มอนุมัติ -->
+                                <button class="btn btn-sm btn-outline-danger fw-bold me-1" onclick="rejectEarlyClose(${c.id})">
+                                    <i class="fa-solid fa-xmark me-1"></i>ไม่อนุมัติ
                                 </button>
                             ` : '-'}
                             <button class="btn btn-sm btn-outline-primary" onclick="openManageModal(${c.id})">
@@ -914,7 +917,11 @@
                     historyBody.appendChild(tr);
                 });
 
-                const modal = new bootstrap.Modal(document.getElementById("manageModal"));
+                const modalElement = document.getElementById("manageModal");
+                let modal = bootstrap.Modal.getInstance(modalElement);
+                if (!modal) {
+                    modal = new bootstrap.Modal(modalElement);
+                }
                 modal.show();
             } catch (err) {
                 alert("ไม่สามารถโหลดข้อมูลสัญญาได้");
@@ -957,7 +964,6 @@
             }
         }
 
-        /* 2. แก้ไขปุ่มยกเลิกการชำระงวดล่าสุดไม่ทำงาน */
         async function unpayLastInstallment() {
             if (!currentContract) return;
             if (!confirm("คุณต้องการยกเลิกการชำระเงินในงวดล่าสุดใช่หรือไม่?")) return;
@@ -1009,6 +1015,22 @@
                 }
             } catch (err) {
                 alert("เกิดข้อผิดพลาดในการปิดยอด");
+            }
+        }
+
+        async function rejectEarlyClose(contractId) {
+            if (!confirm("ยืนยันปฏิเสธการขอปิดยอดสัญญาใช่หรือไม่?")) return;
+            try {
+                const res = await fetch(`/admin/api/contracts/${contractId}/reject_early_close`, { method: "POST" });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    loadContractsData();
+                } else {
+                    alert("ข้อผิดพลาด: " + data.error);
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการปฏิเสธการปิดยอด");
             }
         }
 
