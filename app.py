@@ -154,7 +154,7 @@ def root_api_contract_detail(contract_id):
                     f"-------------------------------\n"
                     f"📦 สินค้า: {contract['product_name']}\n"
                     f"เลขที่สัญญา: {contract['contract_number']}\n\n"
-                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบ** เรียบร้อยแล้วครับ 🙏"
+                    f"สัญญาเช่าซื้อของคุณได้ถูก **ยกเลิก / ลบออกจากระบบจากร้าน** เรียบร้อยแล้วครับ"
                 )
                 send_simple_push_notification(contract['line_user_id'], cancel_msg)
             cursor.close()
@@ -709,7 +709,7 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
             "header": {
                 "type": "box",
                 "layout": "vertical",
-                "backgroundColor": "#0d6efd",
+                "backgroundColor": "#c90404",
                 "paddingAll": "xl",
                 "contents": [
                     {
