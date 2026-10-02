@@ -564,6 +564,55 @@ def process_contract_detail_api(contract_id):
 def get_contract_detail_api(contract_id):
     return process_contract_detail_api(contract_id)
 
+def send_custom_message_api(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+
+        data = request.get_json(silent=True) or request.form
+        message_text = data.get('message') or data.get('text') or data.get('custom_message')
+
+        if not message_text:
+            return jsonify({'error': 'กรุณาระบุข้อความที่ต้องการส่ง'}), 400
+
+        line_user_id = contract.get('line_user_id')
+        if not line_user_id:
+            return jsonify({'error': 'สัญญานี้ยังไม่ได้ผูกกับ LINE User ID ของลูกค้า'}), 400
+
+        title = data.get('title', '📩 ข้อความจากทางร้าน')
+        color = data.get('color', '#0d6efd')
+
+        flex_msg = build_flex_message_ui(
+            title=title,
+            body_text=message_text,
+            contract_number=contract.get('contract_number', ''),
+            product_name=contract.get('product_name', ''),
+            color=color
+        )
+        line_bot_api.push_message(line_user_id, flex_msg)
+
+        return jsonify({'message': 'ส่งข้อความหาลูกค้าสำเร็จเรียบร้อยแล้ว', 'contract_id': contract_id})
+
+    except Exception as e:
+        return jsonify({'error': f'เกิดข้อผิดพลาดในการส่งข้อความ: {str(e)}'}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/send_custom_message', methods=['POST'])
+@admin_bp.route('/contracts/<int:contract_id>/send_custom_message', methods=['POST'])
+def handle_send_custom_message_api(contract_id):
+    return send_custom_message_api(contract_id)
+
 @admin_bp.route('/contract_document/<int:contract_id>', methods=['GET'])
 def get_contract_document(contract_id):
     try:

@@ -19,7 +19,7 @@ import qrcode as qrcode_lib
 from admin_routes import (
     admin_bp, process_contracts_api, process_contract_detail_api, 
     process_payments_by_contract_api, pay_contract_installment_api, unpay_contract_installment_api,
-    build_flex_message_ui
+    build_flex_message_ui, send_custom_message_api
 )
 
 app = Flask(__name__)
@@ -159,6 +159,10 @@ def root_api_contract_detail(contract_id):
             print(f"Error on root delete contract: {e}")
             
     return process_contract_detail_api(contract_id)
+
+@app.route('/api/contracts/<int:contract_id>/send_custom_message', methods=['POST'])
+def root_api_send_custom_message(contract_id):
+    return send_custom_message_api(contract_id)
 
 @app.route('/api/contracts/<int:contract_id>/status', methods=['PUT', 'POST'])
 def root_api_update_contract_status(contract_id):
