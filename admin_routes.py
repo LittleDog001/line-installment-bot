@@ -1,4 +1,3 @@
-# admin_routes.py (Part 1/2)
 import os
 import datetime
 import calendar
@@ -440,11 +439,9 @@ def process_contracts_api():
 @admin_bp.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 @admin_bp.route('/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def get_contracts_api():
-    return process_contracts_api()# admin_routes.py (Part 2/2)
+    return process_contracts_api()
 
-@admin_bp.route('/contract/<int:contract_id>/close-early', methods=['POST'])
-@admin_bp.route('/api/contract/<int:contract_id>/close-early', methods=['POST'])
-def close_contract_early(contract_id):
+def process_contract_detail_api(contract_id):
     try:
         conn = get_db()
     except Exception as e:
@@ -454,34 +451,107 @@ def close_contract_early(contract_id):
     try:
         cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
         contract = cursor.fetchone()
+
         if not contract:
             return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
 
-        now_time = datetime.datetime.now(TH_TZ)
-        cursor.execute("""
-            UPDATE payments 
-            SET status = 'paid', paid_at = %s 
-            WHERE contract_id = %s AND status = 'pending'
-        """, (now_time, contract_id))
+        if request.method in ['PUT', 'POST']:
+            data = request.form if request.form else (request.get_json(silent=True) or {})
+            line_user_id = (data.get('line_user_id') or '').strip()
+            customer_name = (data.get('customer_name') or '').strip()
+            id_card = (data.get('id_card') or '').strip()
+            phone = (data.get('phone') or '').strip()
+            product_name = (data.get('product_name') or '').strip()
+            imei = (data.get('imei') or '').strip()
+            serial_number = (data.get('serial_number') or '').strip()
+            color = (data.get('color') or '').strip()
+            capacity = (data.get('capacity') or '').strip()
 
-        cursor.execute("""
-            UPDATE contracts 
-            SET status = 'closed_early' 
-            WHERE id = %s
-        """, (contract_id,))
+            evidence_filename = contract.get('evidence_file')
+            evidence_file = request.files.get('evidence_file') if request.files else None
+            if evidence_file and evidence_file.filename:
+                filename = werkzeug.utils.secure_filename(evidence_file.filename)
+                timestamp_str = datetime.datetime.now(TH_TZ).strftime('%Y%m%d%H%M%S')
+                evidence_filename = f"ev_{timestamp_str}_{filename}"
+                upload_folder = os.path.join('static', 'uploads')
+                os.makedirs(upload_folder, exist_ok=True)
+                evidence_file.save(os.path.join(upload_folder, evidence_filename))
+
+            changes = []
+            if contract.get('customer_name') != customer_name:
+                changes.append(f"- ชื่อ-นามสกุล: {contract.get('customer_name')} ➡️ {customer_name}")
+            if contract.get('phone') != phone:
+                changes.append(f"- เบอร์โทรศัพท์: {contract.get('phone')} ➡️ {phone}")
+            if contract.get('id_card') != id_card:
+                changes.append(f"- เลขบัตรประชาชน: {contract.get('id_card')} ➡️ {id_card}")
+            if contract.get('product_name') != product_name:
+                changes.append(f"- รุ่นสินค้า: {contract.get('product_name')} ➡️ {product_name}")
+            if contract.get('imei') != imei:
+                changes.append(f"- IMEI: {contract.get('imei')} ➡️ {imei}")
+            if contract.get('serial_number') != serial_number:
+                changes.append(f"- Serial Number: {contract.get('serial_number')} ➡️ {serial_number}")
+            if contract.get('color') != color:
+                changes.append(f"- สี: {contract.get('color')} ➡️ {color}")
+            if contract.get('capacity') != capacity:
+                changes.append(f"- ความจุ: {contract.get('capacity')} ➡️ {capacity}")
+            if evidence_file and evidence_file.filename:
+                changes.append(f"- อัปเดต/เพิ่มหลักฐานการทำสัญญาแล้ว")
+
+            cursor.execute("""
+                UPDATE contracts 
+                SET line_user_id = %s, customer_name = %s, id_card = %s, phone = %s, product_name = %s, imei = %s, serial_number = %s, color = %s, capacity = %s, evidence_file = %s
+                WHERE id = %s
+            """, (line_user_id, customer_name, id_card, phone, product_name, imei, serial_number, color, capacity, evidence_filename, contract_id))
+
+            conn.commit()
+
+            target_line_user_id = line_user_id if line_user_id else contract.get('line_user_id')
+            if target_line_user_id and changes:
+                changes_text = "\n".join(changes)
+                send_push_contract_updated(target_line_user_id, contract.get('contract_number'), product_name, changes_text)
+
+            return jsonify({'message': 'แก้ไขสัญญาและจัดการหลักฐานสำเร็จ', 'contract_id': contract_id})
+
+        elif request.method == 'DELETE':
+            line_user_id = contract.get('line_user_id')
+            contract_number = contract.get('contract_number', '')
+            product_name = contract.get('product_name', '')
+            contract_status = contract.get('status', '')
+
+            cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
+            conn.commit()
+
+            if line_user_id and contract_status not in ['closed', 'closed_early']:
+                send_push_cancellation(line_user_id, contract_number, product_name, contract_status)
+
+            return jsonify({'message': 'ลบสัญญาสำเร็จเรียบร้อยแล้ว', 'contract_id': contract_id})
+
+        c_dict = dict(contract)
+        c_dict = calculate_contract_overdue_status(cursor, c_dict)
+        payments = c_dict['payments']
+
+        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
+        c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
+
+        c_dict['due_day'] = c_dict.get('due_day', 5) or 5
+        if c_dict.get('created_at'):
+            c_dict['created_at_formatted'] = c_dict['created_at'].strftime('%d/%m/%Y %H:%M')
+            c_dict['created_at'] = str(c_dict['created_at'])
+        else:
+            c_dict['created_at_formatted'] = '-'
+
+        paid_count = sum(1 for p in payments if p['status'] == 'paid')
+        remaining_count = c_dict['total_installments'] - paid_count
+        remaining_amount = float(remaining_count * c_dict['installment_amount'])
+        close_with_discount = remaining_amount * 0.85
+
+        c_dict['paid_count'] = paid_count
+        c_dict['remaining_count'] = remaining_count
+        c_dict['remaining_amount'] = remaining_amount
+        c_dict['close_with_discount'] = close_with_discount
 
         conn.commit()
-
-        send_push_thank_you(
-            user_id=contract.get('line_user_id'),
-            contract_number=contract.get('contract_number', ''),
-            product_name=contract.get('product_name', '')
-        )
-
-        if request.path.startswith('/api/'):
-            return jsonify({'message': 'ปิดสัญญาสดสำเร็จ'})
-        return redirect(url_for('admin.index'))
-
+        return jsonify(c_dict)
     except Exception as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 500
@@ -489,201 +559,69 @@ def close_contract_early(contract_id):
         cursor.close()
         conn.close()
 
+@admin_bp.route('/api/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
+@admin_bp.route('/contracts/<int:contract_id>', methods=['GET', 'PUT', 'POST', 'DELETE'])
+def get_contract_detail_api(contract_id):
+    return process_contract_detail_api(contract_id)
 
-@admin_bp.route('/contract/<int:contract_id>/delete', methods=['POST'])
-@admin_bp.route('/api/contract/<int:contract_id>/delete', methods=['POST'])
-def delete_contract(contract_id):
+@admin_bp.route('/contract_document/<int:contract_id>', methods=['GET'])
+def get_contract_document(contract_id):
     try:
         conn = get_db()
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return f"Database error: {str(e)}", 500
 
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
         contract = cursor.fetchone()
         if not contract:
-            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
-
-        cursor.execute("DELETE FROM payments WHERE contract_id = %s", (contract_id,))
-        cursor.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
-
-        conn.commit()
-
-        send_push_cancellation(
-            user_id=contract.get('line_user_id'),
-            contract_number=contract.get('contract_number', ''),
-            product_name=contract.get('product_name', ''),
-            contract_status=contract.get('status', 'active')
-        )
-
-        if request.path.startswith('/api/'):
-            return jsonify({'message': 'ลบสัญญาสำเร็จ'})
-        return redirect(url_for('admin.index'))
-
-    except Exception as e:
-        conn.rollback()
-        return jsonify({'error': str(e)}), 500
-    finally:
-        cursor.close()
-        conn.close()
-
-
-@admin_bp.route('/contract/<int:contract_id>/edit', methods=['POST'])
-@admin_bp.route('/api/contract/<int:contract_id>/edit', methods=['POST'])
-def edit_contract(contract_id):
-    try:
-        conn = get_db()
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
-        old_contract = cursor.fetchone()
-        if not old_contract:
-            return jsonify({'error': 'ไม่พบสัญญาที่ต้องการแก้ไข'}), 404
-
-        data = request.form if request.form else (request.get_json(silent=True) or {})
-
-        customer_name = (data.get('customer_name') or '').strip()
-        id_card = (data.get('id_card') or '').strip()
-        phone = (data.get('phone') or '').strip()
-        product_name = (data.get('product_name') or '').strip()
-        imei = (data.get('imei') or '').strip()
-        serial_number = (data.get('serial_number') or '').strip()
-        color = (data.get('color') or '').strip()
-        capacity = (data.get('capacity') or '').strip()
-        line_user_id = (data.get('line_user_id') or '').strip()
-
-        raw_total = data.get('total_amount')
-        raw_installments = data.get('total_installments')
-        raw_installment_amount = data.get('installment_amount')
-
-        total_installments = int(raw_installments) if raw_installments else old_contract['total_installments']
+            return "ไม่พบสัญญาที่ระบุ", 404
         
-        if raw_installment_amount and float(raw_installment_amount) > 0:
-            installment_amount = float(raw_installment_amount)
-            total_amount = installment_amount * total_installments
-        elif raw_total and float(raw_total) > 0:
-            total_amount = float(raw_total)
-            installment_amount = total_amount / total_installments if total_installments > 0 else 0.0
-        else:
-            total_amount = float(old_contract['total_amount'])
-            installment_amount = float(old_contract['installment_amount'])
+        c_dict = dict(contract)
+        c_dict['total_amount'] = float(c_dict['total_amount']) if c_dict['total_amount'] is not None else 0.0
+        c_dict['installment_amount'] = float(c_dict['installment_amount']) if c_dict['installment_amount'] is not None else 0.0
+        c_dict['monthly_amount'] = c_dict['installment_amount']
+        
+        if c_dict.get('created_at'):
+            c_dict['created_at'] = str(c_dict['created_at'])
 
-        changes = []
-        if customer_name != old_contract['customer_name']:
-            changes.append(f"• ชื่อ-นามสกุล: {old_contract['customer_name']} ➔ {customer_name}")
-        if id_card != old_contract['id_card']:
-            changes.append(f"• เลขบัตรประชาชน: {old_contract['id_card']} ➔ {id_card}")
-        if phone != old_contract['phone']:
-            changes.append(f"• เบอร์โทรศัพท์: {old_contract['phone']} ➔ {phone}")
-        if product_name != old_contract['product_name']:
-            changes.append(f"• สินค้า: {old_contract['product_name']} ➔ {product_name}")
-        if imei != old_contract.get('imei'):
-            changes.append(f"• IMEI: {old_contract.get('imei') or '-'} ➔ {imei}")
-        if serial_number != old_contract.get('serial_number'):
-            changes.append(f"• Serial Number: {old_contract.get('serial_number') or '-'} ➔ {serial_number}")
-        if color != old_contract.get('color'):
-            changes.append(f"• สี: {old_contract.get('color') or '-'} ➔ {color}")
-        if capacity != old_contract.get('capacity'):
-            changes.append(f"• ความจุ: {old_contract.get('capacity') or '-'} ➔ {capacity}")
-        if float(total_amount) != float(old_contract['total_amount']):
-            changes.append(f"• ยอดรวมสัญญา: {float(old_contract['total_amount']):,.2f} ➔ {float(total_amount):,.2f} บาท")
-        if total_installments != old_contract['total_installments']:
-            changes.append(f"• จำนวนงวด: {old_contract['total_installments']} ➔ {total_installments} งวด")
-        if float(installment_amount) != float(old_contract['installment_amount']):
-            changes.append(f"• ยอดผ่อนต่องวด: {float(old_contract['installment_amount']):,.2f} ➔ {float(installment_amount):,.2f} บาท")
-
-        evidence_filename = old_contract.get('evidence_file')
-        evidence_file = request.files.get('evidence_file') if request.files else None
-        if evidence_file and evidence_file.filename:
-            now_time = datetime.datetime.now(TH_TZ)
-            filename = werkzeug.utils.secure_filename(evidence_file.filename)
-            timestamp_str = now_time.strftime('%Y%m%d%H%M%S')
-            evidence_filename = f"ev_{timestamp_str}_{filename}"
-            upload_folder = os.path.join('static', 'uploads')
-            os.makedirs(upload_folder, exist_ok=True)
-            evidence_file.save(os.path.join(upload_folder, evidence_filename))
-            changes.append("• หลักฐานประกอบสัญญา: อัปเดตไฟล์ใหม่เรียบร้อย")
-
-        cursor.execute("""
-            UPDATE contracts SET
-                customer_name = %s,
-                id_card = %s,
-                phone = %s,
-                product_name = %s,
-                imei = %s,
-                serial_number = %s,
-                color = %s,
-                capacity = %s,
-                line_user_id = %s,
-                total_amount = %s,
-                total_installments = %s,
-                installment_amount = %s,
-                evidence_file = %s
-            WHERE id = %s
-        """, (
-            customer_name, id_card, phone, product_name, imei, serial_number, color, capacity,
-            line_user_id, total_amount, total_installments, installment_amount, evidence_filename, contract_id
-        ))
-
-        # หากจำนวนงวดมีการเปลี่ยนแปลง ปรับตารางผ่อนชำระ
-        if total_installments != old_contract['total_installments'] or float(installment_amount) != float(old_contract['installment_amount']):
-            cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
-            existing_payments = cursor.fetchall()
-            existing_dict = {p['installment_no']: p for p in existing_payments}
-
-            # อัปเดตค่างวดที่มีอยู่เดิม
-            for i in range(1, min(total_installments, old_contract['total_installments']) + 1):
-                if existing_dict.get(i) and existing_dict[i]['status'] == 'pending':
-                    cursor.execute("""
-                        UPDATE payments SET amount = %s WHERE contract_id = %s AND installment_no = %s
-                    """, (installment_amount, contract_id, i))
-
-            # หากเพิ่มจำนวนงวด
-            if total_installments > old_contract['total_installments']:
-                for i in range(old_contract['total_installments'] + 1, total_installments + 1):
-                    cursor.execute("""
-                        INSERT INTO payments (contract_id, installment_no, amount, status)
-                        VALUES (%s, %s, %s, 'pending')
-                    """, (contract_id, i, installment_amount))
-
-            # หากลดจำนวนงวด (ลบงวดที่เกินเฉพาะที่ยังไม่ได้จ่าย)
-            elif total_installments < old_contract['total_installments']:
-                cursor.execute("""
-                    DELETE FROM payments 
-                    WHERE contract_id = %s AND installment_no > %s AND status = 'pending'
-                """, (contract_id, total_installments))
-
-        conn.commit()
-
-        if changes and (line_user_id or old_contract.get('line_user_id')):
-            updated_text = "\n".join(changes)
-            target_user_id = line_user_id or old_contract.get('line_user_id')
-            send_push_contract_updated(
-                user_id=target_user_id,
-                contract_number=old_contract.get('contract_number', ''),
-                product_name=product_name,
-                updated_fields_text=updated_text
-            )
-
-        if request.path.startswith('/api/'):
-            return jsonify({'message': 'แก้ไขสัญญาเรียบร้อยแล้ว'})
-        return redirect(url_for('admin.index'))
-
+        return render_template('contract_document.html', c=c_dict)
     except Exception as e:
-        conn.rollback()
-        return jsonify({'error': str(e)}), 500
+        return f"Error loading contract document: {str(e)}", 500
     finally:
         cursor.close()
         conn.close()
 
+@admin_bp.route('/bill/<int:payment_id>', methods=['GET'])
+def get_bill_document(payment_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database error: {str(e)}", 500
 
-@admin_bp.route('/contract/<int:contract_id>/pay-installment', methods=['POST'])
-@admin_bp.route('/api/contract/<int:contract_id>/pay-installment', methods=['POST'])
-def pay_installment(contract_id):
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT p.*, c.customer_name, c.phone, c.contract_number, c.product_name, c.total_installments
+            FROM payments p
+            JOIN contracts c ON p.contract_id = c.id
+            WHERE p.id = %s
+        """, (payment_id,))
+        payment = cursor.fetchone()
+        if not payment:
+            return "ไม่พบข้อมูลบิลชำระเงิน", 404
+
+        p_dict = dict(payment)
+        p_dict['amount'] = float(p_dict['amount']) if p_dict['amount'] is not None else 0.0
+        return render_template('bill.html', p=p_dict)
+    except Exception as e:
+        return f"Error loading bill document: {str(e)}", 500
+    finally:
+        cursor.close()
+        conn.close()
+
+def process_payments_by_contract_api(contract_identifier):
     try:
         conn = get_db()
     except Exception as e:
@@ -691,66 +629,252 @@ def pay_installment(contract_id):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        cursor.execute("SELECT * FROM contracts WHERE contract_number = %s OR id::text = %s", (contract_identifier, contract_identifier))
         contract = cursor.fetchone()
         if not contract:
-            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+            return jsonify({'error': 'ไม่พบสัญญา'}), 404
 
-        data = request.form if request.form else (request.get_json(silent=True) or {})
-        installment_no = data.get('installment_no')
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
+        payments = [dict(p) for p in cursor.fetchall()]
+        return jsonify(payments)
+    finally:
+        cursor.close()
+        conn.close()
 
-        if not installment_no:
-            cursor.execute("""
-                SELECT * FROM payments 
-                WHERE contract_id = %s AND status = 'pending' 
-                ORDER BY installment_no ASC LIMIT 1
-            """, (contract_id,))
-            payment = cursor.fetchone()
+@admin_bp.route('/api/payments/<contract_identifier>', methods=['GET'])
+@admin_bp.route('/payments/<contract_identifier>', methods=['GET'])
+def get_payments_by_contract_api(contract_identifier):
+    return process_payments_by_contract_api(contract_identifier)
+
+def pay_contract_installment_api(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    cursor = conn.cursor()
+    try:
+        data = request.get_json(silent=True) or request.form
+        installment_no = data.get('installment_no') if data else None
+
+        if installment_no:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract_id, int(installment_no)))
         else:
-            cursor.execute("""
-                SELECT * FROM payments 
-                WHERE contract_id = %s AND installment_no = %s
-            """, (contract_id, int(installment_no)))
-            payment = cursor.fetchone()
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1", (contract_id,))
+
+        payment = cursor.fetchone()
 
         if not payment:
-            return jsonify({'error': 'ไม่พบรายการงวดชำระที่รอดำเนินการ'}), 404
+            return jsonify({'error': 'ชำระเงินครบหมดแล้ว หรือไม่พบรายการงวด'}), 400
 
-        now_time = datetime.datetime.now(TH_TZ)
+        receipt_no = f"REC-{contract_id}-{payment['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
         cursor.execute("""
             UPDATE payments 
-            SET status = 'paid', paid_at = %s 
+            SET status = 'paid', paid_at = %s, receipt_no = %s
             WHERE id = %s
-        """, (now_time, payment['id']))
-
-        # ตรวจสอบว่าชำระครบทุกงวดหรือยัง
-        cursor.execute("SELECT COUNT(*) as unpaid FROM payments WHERE contract_id = %s AND status = 'pending'", (contract_id,))
-        unpaid_row = cursor.fetchone()
-        
-        if unpaid_row['unpaid'] == 0:
-            cursor.execute("UPDATE contracts SET status = 'closed' WHERE id = %s", (contract_id,))
-            send_push_thank_you(
-                user_id=contract.get('line_user_id'),
-                contract_number=contract.get('contract_number', ''),
-                product_name=contract.get('product_name', '')
-            )
-        else:
-            paid_at_str = now_time.strftime('%d/%m/%Y %H:%M น.')
-            send_push_payment_notification(
-                user_id=contract.get('line_user_id'),
-                contract_number=contract.get('contract_number', ''),
-                product_name=contract.get('product_name', ''),
-                installment_no=payment['installment_no'],
-                amount=float(payment['amount']),
-                paid_at=paid_at_str
-            )
+        """, (now_str, receipt_no, payment['id']))
 
         conn.commit()
 
-        if request.path.startswith('/api/'):
-            return jsonify({'message': f"บันทึกการชำระเงินงวดที่ {payment['installment_no']} สำเร็จ"})
-        return redirect(url_for('admin.index'))
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = dict(cursor.fetchone())
+        calculate_contract_overdue_status(cursor, contract)
+        
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
+        all_payments = cursor.fetchall()
 
+        paid_count = sum(1 for p in all_payments if p['status'] == 'paid')
+        remaining_count = contract['total_installments'] - paid_count
+        remaining_amount = float(remaining_count * contract['installment_amount'])
+
+        if remaining_count == 0:
+            cursor.execute("UPDATE contracts SET status = 'closed' WHERE id = %s", (contract_id,))
+            conn.commit()
+            send_push_thank_you(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
+        else:
+            send_push_payment_notification(
+                contract.get('line_user_id'), 
+                contract.get('contract_number'), 
+                contract.get('product_name'), 
+                payment['installment_no'], 
+                float(payment['amount']), 
+                now_str
+            )
+
+        return jsonify({
+            'message': f'ชำระเงินงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว',
+            'payment_id': payment['id'],
+            'paid_count': paid_count,
+            'remaining_count': remaining_count,
+            'remaining_amount': remaining_amount
+        })
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/pay', methods=['POST', 'PUT'])
+def handle_pay_contract_installment_api(contract_id):
+    return pay_contract_installment_api(contract_id)
+
+def unpay_contract_installment_api(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    cursor = conn.cursor()
+    try:
+        data = request.get_json(silent=True) or request.form
+        installment_no = data.get('installment_no') if data else None
+
+        if installment_no:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s", (contract_id, int(installment_no)))
+        else:
+            cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status = 'paid' ORDER BY installment_no DESC LIMIT 1", (contract_id,))
+
+        payment = cursor.fetchone()
+
+        if not payment:
+            return jsonify({'error': 'ยังไม่มีรายการที่ชำระเงิน หรือไม่พบงวดที่จะยกเลิก'}), 400
+
+        cursor.execute("""
+            UPDATE payments 
+            SET status = 'pending', paid_at = NULL, receipt_no = NULL
+            WHERE id = %s
+        """, (payment['id'],))
+
+        cursor.execute("UPDATE contracts SET status = 'active' WHERE id = %s AND status IN ('closed_early', 'closed', 'cancelled')", (contract_id,))
+
+        conn.commit()
+
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = dict(cursor.fetchone())
+        calculate_contract_overdue_status(cursor, contract)
+
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract_id,))
+        all_payments = cursor.fetchall()
+
+        paid_count = sum(1 for p in all_payments if p['status'] == 'paid')
+        remaining_count = contract['total_installments'] - paid_count
+        remaining_amount = float(remaining_count * contract['installment_amount'])
+
+        return jsonify({
+            'message': f'ยกเลิกการชำระงวดที่ {payment["installment_no"]} เรียบร้อยแล้ว',
+            'paid_count': paid_count,
+            'remaining_count': remaining_count,
+            'remaining_amount': remaining_amount
+        })
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
+def handle_unpay_contract_installment_api(contract_id):
+    return unpay_contract_installment_api(contract_id)
+
+@admin_bp.route('/api/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/status', methods=['POST', 'PUT'])
+def update_contract_status_api(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    cursor = conn.cursor()
+    try:
+        data = request.get_json(silent=True) or request.form
+        status = data.get('status', 'active') if data else 'active'
+
+        cursor.execute("UPDATE contracts SET status = %s WHERE id = %s", (status, contract_id))
+        conn.commit()
+
+        return jsonify({'message': 'อัปเดตสถานะสัญญาเรียบร้อยแล้ว', 'status': status})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/close_early', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/close_early', methods=['POST', 'PUT'])
+def close_contract_early_api(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    now_str = datetime.datetime.now(TH_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+
+        cursor.execute("SELECT * FROM payments WHERE contract_id = %s AND status != 'paid'", (contract_id,))
+        unpaid_payments = cursor.fetchall()
+
+        for p in unpaid_payments:
+            receipt_no = f"REC-EARLY-{contract_id}-{p['installment_no']}-{datetime.datetime.now(TH_TZ).strftime('%M%S')}"
+            cursor.execute("""
+                UPDATE payments 
+                SET status = 'paid', paid_at = %s, receipt_no = %s
+                WHERE id = %s
+            """, (now_str, receipt_no, p['id']))
+
+        cursor.execute("UPDATE contracts SET status = 'closed_early', requested_early_close = FALSE WHERE id = %s", (contract_id,))
+        conn.commit()
+
+        send_push_thank_you(contract.get('line_user_id'), contract.get('contract_number'), contract.get('product_name'))
+
+        return jsonify({'message': 'บันทึกการปิดยอดสัญญาสำเร็จ'})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/contracts/<int:contract_id>/reject_early_close', methods=['POST', 'PUT'])
+@admin_bp.route('/contracts/<int:contract_id>/reject_early_close', methods=['POST', 'PUT'])
+def reject_early_close_api(contract_id):
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (contract_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'error': 'ไม่พบข้อมูลสัญญา'}), 404
+
+        cursor.execute("UPDATE contracts SET requested_early_close = FALSE WHERE id = %s", (contract_id,))
+        conn.commit()
+
+        line_user_id = contract.get('line_user_id')
+        if line_user_id:
+            reject_msg = "ไม่ตรวจพบการแจ้งเตือนชำระเงินเข้าตามจำนวนเงินในการปิดยอด"
+            flex_msg = build_flex_message_ui("❌ ไม่อนุมัติการขอปิดยอด", reject_msg, contract.get('contract_number'), contract.get('product_name'), color="#dc3545")
+            try:
+                line_bot_api.push_message(line_user_id, flex_msg)
+            except Exception as e:
+                print(f"Error sending reject notification: {e}")
+
+        return jsonify({'message': 'ปฏิเสธการปิดยอดสัญญาเรียบร้อยแล้ว'})
     except Exception as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 500
