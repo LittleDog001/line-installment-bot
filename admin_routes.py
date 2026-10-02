@@ -440,8 +440,7 @@ def process_contracts_api():
 @admin_bp.route('/api/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 @admin_bp.route('/contracts', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def get_contracts_api():
-    return process_contracts_api()
-    # admin_routes.py (Part 2/2)
+    return process_contracts_api()# admin_routes.py (Part 2/2)
 
 @admin_bp.route('/contract/<int:contract_id>/close-early', methods=['POST'])
 @admin_bp.route('/api/contract/<int:contract_id>/close-early', methods=['POST'])
