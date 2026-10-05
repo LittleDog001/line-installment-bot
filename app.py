@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import datetime
 import calendar
 import urllib.parse
@@ -11,7 +12,9 @@ from flask import Flask, request, abort, render_template, jsonify, send_file
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
-    MessageEvent, TextMessage, ImageMessage, TextSendMessage, FlexSendMessage, ImageSendMessage, QuickReply, QuickReplyButton, MessageAction
+    MessageEvent, TextMessage, ImageMessage, TextSendMessage, FlexSendMessage, ImageSendMessage,
+    QuickReply, QuickReplyButton, MessageAction, PostbackAction, PostbackEvent, FollowEvent,
+    RichMenuRequest, RichMenuArea, RichMenuBound, RichMenuSize
 )
 from promptpay import qrcode
 import qrcode as qrcode_lib
@@ -39,6 +42,73 @@ THAI_MONTHS = [
     "", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
     "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
 ]
+
+# ============================================================================
+# ระบบป้องกันบอท + โปรโตคอลคำสั่งจากปุ่มเมนู (Quick Reply / Flex Button / Rich Menu)
+# ============================================================================
+# บอทจะตอบกลับ "เฉพาะเมื่อลูกค้ากดปุ่มบนเมนู" เท่านั้น
+# ข้อความที่ลูกค้าพิมพ์เองด้วยมือจะถูกบล็อกทิ้ง (ไม่ตอบอัตโนมัติ) กันการถูกบอทหรือสแปมยิงคำสั่ง
+CMD_PREFIX = "#BOTMENU#"
+
+CMD_STATUS      = "status"         # เช็คยอดค่างวด
+CMD_CONTRACT    = "contract"       # ดูรายละเอียดสัญญา
+CMD_PAY         = "pay"            # ชำระงวดที่ N
+CMD_PAY_NEXT    = "pay_next"       # ชำระงวดถัดไป (งวดค้างชำระล่าสุด)
+CMD_EARLY_CLOSE = "early_close"    # ปิดยอดก่อนกำหนด (ส่วนลด 15%)
+CMD_UPLOAD_SLIP = "upload_slip"    # เปิดสถานะรอรับสลิป (ต้องกดปุ่มนี้ก่อน ถึงจะรับรูปได้)
+CMD_CANCEL      = "cancel"         # ยกเลิกคำสั่งที่ค้างไว้
+CMD_MENU        = "menu"           # เมนูหลัก
+
+# เมนูหลัก (ใช้ทั้งใน Quick Reply และ Rich Menu)
+MAIN_MENU_BUTTONS = [
+    ("เช็คยอดค่างวด", CMD_STATUS),
+    ("ชำระงวดถัดไป", CMD_PAY_NEXT),
+    ("ปิดยอดก่อนกำหนด", CMD_EARLY_CLOSE),
+    ("ข้อมูลสัญญา", CMD_CONTRACT),
+]
+
+# สถานะค้างของลูกค้า: รอส่งรูปสลิป (ต้องกดปุ่มอัปโหลดสลิปมาก่อนเท่านั้น)
+STATE_AWAIT_SLIP = 'await_slip'
+SLIP_STATE_TTL_MINUTES = int(os.environ.get('SLIP_STATE_TTL_MINUTES', '30'))
+RICH_MENU_ID = os.environ.get('LINE_RICHMENU_ID', '')
+
+# โหมดสำรอง: ถ้าใครต้องการให้ลูกค้าพิมพ์ข้อความเองได้ ให้ตั้งค่านี้เป็น true
+# ค่าเริ่มต้น = false (ปิดไว้ตามหลักป้องกันบอท)
+ALLOW_LEGACY_TEXT_COMMANDS = os.environ.get('ALLOW_LEGACY_TEXT_COMMANDS', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def build_cmd(action, *args):
+    """ สร้างข้อความคำสั่งที่ฝังไว้ในปุ่มเมนู เพื่อให้ระบบแยกได้ว่าลูกค้ากดปุ่ม (ไม่ใช่พิมพ์เอง) """
+    parts = [str(a) for a in args if a is not None and str(a) != '']
+    return CMD_PREFIX + str(action) + ('|' + '|'.join(parts) if parts else '')
+
+
+def parse_cmd(text):
+    """ แยกคำสั่งจากปุ่มเมนู -> (action, args) หรือ None ถ้าไม่ใช่คำสั่งจากเมนู """
+    if not text:
+        return None
+    raw = str(text).strip()
+    if not raw.startswith(CMD_PREFIX):
+        return None
+    segments = raw[len(CMD_PREFIX):].split('|')
+    action = segments[0].strip()
+    if not action:
+        return None
+    return action, segments[1:]
+
+
+def build_quick_reply(items):
+    """ สร้าง Quick Reply จากรายการ (label, action, *args)
+        ใช้ PostbackAction เพื่อไม่ให้ข้อความคำสั่งไปโผล่ในห้องแชทของลูกค้า """
+    buttons = []
+    for item in items or []:
+        label = str(item[0])
+        action = item[1]
+        args = item[2:]
+        # LINE กำหนดให้ label ของ Quick Reply ไม่เกิน 20 ตัวอักษร
+        buttons.append(QuickReplyButton(action=PostbackAction(label=label[:20], data=build_cmd(action, *args))))
+    return QuickReply(items=buttons) if buttons else None
+
 
 def get_db():
     db_url = os.environ.get('DATABASE_URL')
@@ -119,6 +189,18 @@ def init_db():
     cursor.execute('ALTER TABLE payment_slips ADD COLUMN IF NOT EXISTS admin_note TEXT;')
     cursor.execute('ALTER TABLE payment_slips ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;')
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_payment_slips_status ON payment_slips (status);")
+
+    # ตารางเก็บสถานะค้างของลูกค้า (เช่น รอส่งรูปสลิป) ใช้ควบคุมว่าจะรับรูป/คำสั่งได้หรือไม่
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS line_user_states (
+            line_user_id VARCHAR(100) PRIMARY KEY,
+            state VARCHAR(50),
+            payload TEXT,
+            expires_at TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_line_user_states_state ON line_user_states (state);")
     conn.commit()
     cursor.close()
     conn.close()
@@ -127,6 +209,129 @@ try:
     init_db()
 except Exception as e:
     print(f"Database initialization error: {e}")
+
+# ============================================================================
+# จัดการสถานะค้างของลูกค้า (ใช้ควบคุมการรับรูปสลิป / คำสั่งจากเมนู)
+# หมายเหตุ: ใช้ NOW() ของฐานข้อมูลทั้งหมด เพื่อเลี่ยงปัญหา timezone ระหว่าง Python กับ PostgreSQL
+# ============================================================================
+def set_user_state(user_id, state, payload=None, ttl_minutes=None):
+    """ บันทึกสถานะค้างของลูกค้า (เช่น กำลังรอรับรูปสลิป) ลงฐานข้อมูล """
+    if not user_id or not state:
+        return False
+
+    ttl = SLIP_STATE_TTL_MINUTES if ttl_minutes is None else ttl_minutes
+
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"DB Error on set_user_state: {e}")
+        return False
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO line_user_states (line_user_id, state, payload, expires_at, updated_at)
+            VALUES (%s, %s, %s, NOW() + (%s * INTERVAL '1 minute'), NOW())
+            ON CONFLICT (line_user_id) DO UPDATE
+            SET state = EXCLUDED.state,
+                payload = EXCLUDED.payload,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = NOW()
+        """, (user_id, state, payload, int(ttl)))
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"Error setting user state: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_user_state(user_id):
+    """ คืนสถานะค้างของลูกค้าเป็น dict ({'state':..., 'payload':...}) หรือ None ถ้าไม่มี/หมดอายุ """
+    if not user_id:
+        return None
+
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"DB Error on get_user_state: {e}")
+        return None
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT state, payload FROM line_user_states
+            WHERE line_user_id = %s AND (expires_at IS NULL OR expires_at > NOW())
+            """,
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            # ไม่มีสถานะ (หรือหมดอายุ) -> ล้างข้อมูลเก่าทิ้ง
+            cursor.execute("DELETE FROM line_user_states WHERE line_user_id = %s", (user_id,))
+            conn.commit()
+            return None
+        return {'state': row['state'], 'payload': row['payload']}
+    except Exception as e:
+        print(f"Error reading user state: {e}")
+        return None
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def clear_user_state(user_id):
+    """ ล้างสถานะค้างของลูกค้า """
+    if not user_id:
+        return False
+
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"DB Error on clear_user_state: {e}")
+        return False
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM line_user_states WHERE line_user_id = %s", (user_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        print(f"Error clearing user state: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_state_installment_no(user_state, default=None):
+    """ ดึงเลขงวดที่ลูกค้ากดปุ่มอัปโหลดสลิปไว้ (ถ้าไม่มีใช้ค่า default) """
+    if not user_state:
+        return default
+    raw = user_state.get('payload')
+    if not raw:
+        return default
+    try:
+        return json.loads(raw).get('installment_no') or default
+    except Exception:
+        return default
+
+
+def get_active_contract(cursor, user_id, statuses=None):
+    """ ดึงสัญญาที่กำลังใช้งานอยู่ของลูกค้า """
+    statuses = statuses or ('active', 'overdue_1', 'overdue_2')
+    placeholders = ', '.join(['%s'] * len(statuses))
+    cursor.execute(
+        f"SELECT * FROM contracts WHERE line_user_id = %s AND status IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+        (user_id, *statuses)
+    )
+    return cursor.fetchone()
+
 
 def get_installment_due_date(created_at, due_day, installment_no):
     if isinstance(created_at, str):
