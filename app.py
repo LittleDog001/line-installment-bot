@@ -46,7 +46,7 @@ THAI_MONTHS = [
 # ระบบป้องกันบอท + โปรโตคอลคำสั่งจากปุ่มเมนู (Quick Reply / Flex Button)
 # ============================================================================
 # บอทจะตอบกลับ "เฉพาะเมื่อลูกค้ากดปุ่มบนเมนู" เท่านั้น
-# ข้อความที่ลูกค้าพิมพ์เองด้วยมือจะถูกบล็อกทิ้ง (ไม่ตอบอัตโนมัติ) กันการถูกบอทหรือสแปมยิงคำสั่ง
+# ข้อความจากผู้ใช้/ริชเมนู LINE OA รับเฉพาะคำสั่งที่อนุญาตด้านล่าง
 CMD_PREFIX = "#BOTMENU#"
 
 CMD_STATUS      = "status"         # เช็คยอดค่างวด
@@ -57,6 +57,12 @@ CMD_EARLY_CLOSE = "early_close"    # ปิดยอดก่อนกำหน�
 CMD_UPLOAD_SLIP = "upload_slip"    # เปิดสถานะรอรับสลิป (ต้องกดปุ่มนี้ก่อน ถึงจะรับรูปได้)
 CMD_CANCEL      = "cancel"         # ยกเลิกคำสั่งที่ค้างไว้
 CMD_MENU        = "menu"           # เมนูหลัก
+
+TEXT_COMMANDS = {
+    "เช็คยอด": CMD_STATUS,
+    "สัญญา": CMD_CONTRACT,
+    "ชำระค่างวด": CMD_PAY_NEXT,
+}
 
 # เมนูหลัก (ใช้ใน Quick Reply)
 MAIN_MENU_BUTTONS = [
@@ -74,7 +80,7 @@ WELCOME_BODY_TEXT = (
     "• ชำระงวดถัดไป – รับ QR Code สำหรับชำระเงิน\n"
     "• ปิดยอดก่อนกำหนด – ปิดสัญญาพร้อมส่วนลด 15%\n"
     "• ข้อมูลสัญญา – ดูรายละเอียดสัญญาทั้งหมด\n\n"
-    "⚠️ ระบบจะตอบกลับเฉพาะเมื่อกดปุ่มเมนูเท่านั้น เพื่อป้องกันการส่งข้อความรบกวน"
+    "หรือพิมพ์ข้อความ: เช็คยอด, สัญญา, ชำระค่างวด"
 )
 
 MENU_BODY_TEXT = (
@@ -83,7 +89,7 @@ MENU_BODY_TEXT = (
     "• ชำระงวดถัดไป – รับ QR Code สำหรับชำระเงิน\n"
     "• ปิดยอดก่อนกำหนด – ปิดสัญญาพร้อมส่วนลด 15%\n"
     "• ข้อมูลสัญญา – ดูรายละเอียดสัญญาทั้งหมด\n\n"
-    "⚠️ ระบบจะตอบกลับเฉพาะเมื่อกดปุ่มเมนูเท่านั้น"
+    "หรือพิมพ์ข้อความ: เช็คยอด, สัญญา, ชำระค่างวด"
 )
 
 # สถานะค้างของลูกค้า: รอส่งรูปสลิป (ต้องกดปุ่มอัปโหลดสลิปมาก่อนเท่านั้น)
@@ -798,9 +804,15 @@ def run_command(action, args, user_id, reply_token):
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    """ ไม่ตอบข้อความตัวอักษร; คำสั่งทำงานผ่าน postback จากปุ่มที่ระบบส่งเท่านั้น """
+    """ รับข้อความที่อนุญาตเท่านั้น เพื่อรองรับการพิมพ์และ Rich Menu แบบ Message action """
     user_id = event.source.user_id
-    print(f"[ANTI-BOT] ignored customer text message | user={user_id}")
+    user_text = event.message.text.strip()
+    action = TEXT_COMMANDS.get(user_text)
+    if not action:
+        print(f"[ANTI-BOT] ignored unconfigured text message | user={user_id}")
+        return
+
+    run_command(action, [], user_id, event.reply_token)
 
 
 @handler.add(PostbackEvent)

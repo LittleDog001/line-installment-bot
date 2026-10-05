@@ -22,11 +22,14 @@ check("parse_cmd ไม่มี args", app.parse_cmd("#BOTMENU#status") == ("st
 check("parse_cmd กัน None", app.parse_cmd(None) is None)
 check("parse_cmd กันค่าว่าง", app.parse_cmd("") is None)
 
-print("\n=== 2. ระบบป้องกันบอท: ข้อความที่พิมพ์เอง ต้องไม่ถูกมองเป็นคำสั่ง ===")
-typed = ["เช็คยอด", "เช็คค่างวด", "เมนู", "สัญญา", "ชำระงวดที่ 3", "ปิดยอดก่อนกำหนด",
+print("\n=== 2. ระบบป้องกันบอท: รับเฉพาะข้อความที่อนุญาต ===")
+typed = ["เช็คค่างวด", "เมนู", "ชำระงวดที่ 3", "ปิดยอดก่อนกำหนด",
          "0812345678", "hello", "เช็ค", "  ", "#BOTMENU", "BOTMENU#pay|1", "x#BOTMENU#pay|1"]
 for t in typed:
     check(f"บล็อกข้อความพิมพ์เอง: {t!r}", app.parse_cmd(t) is None)
+check("อนุญาตข้อความเช็คยอด", app.TEXT_COMMANDS.get("เช็คยอด") == app.CMD_STATUS)
+check("อนุญาตข้อความสัญญา", app.TEXT_COMMANDS.get("สัญญา") == app.CMD_CONTRACT)
+check("อนุญาตข้อความชำระค่างวด", app.TEXT_COMMANDS.get("ชำระค่างวด") == app.CMD_PAY_NEXT)
 
 print("\n=== 3. คำสั่งจากปุ่มเมนู ต้องถูกมองเป็นคำสั่ง ===")
 for a in [app.CMD_STATUS, app.CMD_CONTRACT, app.CMD_PAY_NEXT, app.CMD_EARLY_CLOSE, app.CMD_CANCEL, app.CMD_MENU]:
@@ -85,21 +88,37 @@ required = ["set_user_state", "get_user_state", "clear_user_state", "get_active_
 for fn in required:
     check(f"มีฟังก์ชัน {fn}", callable(getattr(app, fn, None)))
 
-print("\n=== 9. ข้อความพิมพ์เองทุกชนิดต้องไม่กระตุ้นบอท ===")
+print("\n=== 9. ข้อความที่กำหนดเท่านั้นจึงเรียกคำสั่ง ===")
 original_run_command = app.run_command
-app.run_command = lambda *args: (_ for _ in ()).throw(AssertionError("ข้อความถูกส่งเข้า run_command"))
-for text in ["สวัสดี", "เช็คยอดค่างวด", "#BOTMENU#status"]:
+received_commands = []
+app.run_command = lambda *args: received_commands.append(args)
+for text, expected_action in [
+    ("เช็คยอด", app.CMD_STATUS),
+    ("สัญญา", app.CMD_CONTRACT),
+    ("ชำระค่างวด", app.CMD_PAY_NEXT),
+]:
     event = SimpleNamespace(
         message=SimpleNamespace(text=text),
         source=SimpleNamespace(user_id="U-test"),
         reply_token="reply-token"
     )
-    try:
-        with redirect_stdout(StringIO()):
-            app.handle_message(event)
-        check(f"ไม่ตอบข้อความ: {text!r}", True)
-    except Exception as err:
-        check(f"ไม่ตอบข้อความ: {text!r}", False, str(err))
+    app.handle_message(event)
+    check(
+        f"เรียกคำสั่ง {text}",
+        received_commands[-1] == (expected_action, [], "U-test", "reply-token"),
+        str(received_commands[-1])
+    )
+
+received_commands.clear()
+for text in ["สวัสดี", "เช็คยอดค่างวด", "#BOTMENU#status", "ชำระงวด"]:
+    event = SimpleNamespace(
+        message=SimpleNamespace(text=text),
+        source=SimpleNamespace(user_id="U-test"),
+        reply_token="reply-token"
+    )
+    with redirect_stdout(StringIO()):
+        app.handle_message(event)
+    check(f"ไม่เรียกคำสั่งสำหรับ: {text!r}", not received_commands)
 app.run_command = original_run_command
 
 print("\n" + "=" * 50)
