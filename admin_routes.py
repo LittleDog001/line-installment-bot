@@ -747,36 +747,62 @@ def process_slip_review_api(slip_id):
         paid_payment = None
 
         if mark_as_paid:
-            installment_no = data.get('installment_no') or slip.get('installment_no')
-
-            if installment_no:
+            if slip.get('payment_type') == 'early_close':
                 cursor.execute(
-                    "SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s",
-                    (slip['contract_id'], int(installment_no))
-                )
-            else:
-                cursor.execute(
-                    "SELECT * FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1",
+                    "SELECT * FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC",
                     (slip['contract_id'],)
                 )
-            payment = cursor.fetchone()
+                unpaid_payments = cursor.fetchall()
+                if not unpaid_payments:
+                    return jsonify({'error': 'ไม่พบรายการงวดค้างชำระสำหรับปิดยอด'}), 400
 
-            if not payment:
-                return jsonify({'error': 'ไม่พบรายการงวดที่จะบันทึกการชำระ'}), 400
-
-            if payment['status'] == 'paid':
-                paid_payment = dict(payment)
-                paid_payment['amount'] = float(payment['amount']) if payment['amount'] is not None else 0.0
-            else:
                 now_str = now_time.strftime('%Y-%m-%d %H:%M:%S')
-                receipt_no = f"REC-SLIP-{slip_id}-{payment['installment_no']}-{now_time.strftime('%M%S')}"
-                cursor.execute("""
-                    UPDATE payments
-                    SET status = 'paid', paid_at = %s, receipt_no = %s
-                    WHERE id = %s
-                """, (now_str, receipt_no, payment['id']))
-                paid_payment = dict(payment)
-                paid_payment['amount'] = float(payment['amount']) if payment['amount'] is not None else 0.0
+                for payment in unpaid_payments:
+                    receipt_no = f"REC-EARLY-SLIP-{slip_id}-{payment['installment_no']}-{now_time.strftime('%M%S')}"
+                    cursor.execute("""
+                        UPDATE payments
+                        SET status = 'paid', paid_at = %s, receipt_no = %s
+                        WHERE id = %s
+                    """, (now_str, receipt_no, payment['id']))
+                cursor.execute(
+                    "UPDATE contracts SET status = 'closed_early', requested_early_close = FALSE WHERE id = %s",
+                    (slip['contract_id'],)
+                )
+                paid_payment = {
+                    'payment_type': 'early_close',
+                    'amount': float(slip['slip_amount']) if slip.get('slip_amount') is not None else 0.0
+                }
+            else:
+                installment_no = data.get('installment_no') or slip.get('installment_no')
+
+                if installment_no:
+                    cursor.execute(
+                        "SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s",
+                        (slip['contract_id'], int(installment_no))
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT * FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1",
+                        (slip['contract_id'],)
+                    )
+                payment = cursor.fetchone()
+
+                if not payment:
+                    return jsonify({'error': 'ไม่พบรายการงวดที่จะบันทึกการชำระ'}), 400
+
+                if payment['status'] == 'paid':
+                    paid_payment = dict(payment)
+                    paid_payment['amount'] = float(payment['amount']) if payment['amount'] is not None else 0.0
+                else:
+                    now_str = now_time.strftime('%Y-%m-%d %H:%M:%S')
+                    receipt_no = f"REC-SLIP-{slip_id}-{payment['installment_no']}-{now_time.strftime('%M%S')}"
+                    cursor.execute("""
+                        UPDATE payments
+                        SET status = 'paid', paid_at = %s, receipt_no = %s
+                        WHERE id = %s
+                    """, (now_str, receipt_no, payment['id']))
+                    paid_payment = dict(payment)
+                    paid_payment['amount'] = float(payment['amount']) if payment['amount'] is not None else 0.0
 
         target_installment_no = data.get('installment_no') or slip.get('installment_no')
         cursor.execute("""
@@ -811,7 +837,20 @@ def process_slip_review_api(slip_id):
         contract_line_user_id = slip.get('line_user_id')
 
         if contract_line_user_id:
-            if paid_payment and paid_payment.get('installment_no'):
+            if slip.get('payment_type') == 'early_close' and mark_as_paid:
+                approve_body = (
+                    "ได้รับการยืนยันยอดชำระปิดสัญญาของคุณเรียบร้อยแล้วครับ ✅\n\n"
+                    f"💰 จำนวนเงิน: {paid_payment['amount']:,.2f} บาท\n\n"
+                    "ขอบคุณที่ไว้วางใจใช้บริการของเราครับ 🙏✨"
+                )
+                flex_approve = build_flex_message_ui(
+                    "🎉 ยืนยันการปิดยอดสัญญา",
+                    approve_body,
+                    contract_number=slip.get('contract_number'),
+                    product_name=slip.get('product_name'),
+                    color="#198754"
+                )
+            elif paid_payment and paid_payment.get('installment_no'):
                 approve_body = (
                     "ได้รับการยืนยันยอดชำระเงินของคุณเรียบร้อยแล้วครับ ✅\n\n"
                     f"🔢 งวดที่: {paid_payment['installment_no']}\n"
@@ -845,7 +884,9 @@ def process_slip_review_api(slip_id):
 
         return jsonify({
             'message': 'อนุมัติสลิปเรียบร้อยแล้ว',
-            'payment_marked_paid': bool(paid_payment and paid_payment.get('installment_no'))
+            'payment_marked_paid': bool(
+                paid_payment and (paid_payment.get('installment_no') or paid_payment.get('payment_type') == 'early_close')
+            )
         })
     except Exception as e:
         conn.rollback()

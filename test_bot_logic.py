@@ -1,5 +1,8 @@
 """ สคริปต์ทดสอบตรรกะระบบป้องกันบอท + ปุ่มอัปโหลดสลิป (ไม่ต้องใช้ฐานข้อมูลจริง) """
 import sys, os
+from types import SimpleNamespace
+from contextlib import redirect_stdout
+from io import StringIO
 sys.path.insert(0, os.path.join(os.environ['TEMP'], 'stub'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,41 +46,61 @@ for b in qr2.items:
 check("build_quick_reply(None) -> None", app.build_quick_reply(None) is None)
 check("build_quick_reply([]) -> None", app.build_quick_reply([]) is None)
 
-print("\n=== 5. payload ริชเมนู (ยิง REST API ตรง ไม่ใช้คลาสของ SDK) ===")
-payload = app.build_rich_menu_payload()
-check("มี 4 ปุ่ม", len(payload["areas"]) == 4, str(len(payload["areas"])))
-check("ทุกปุ่มเป็น postback", all(a["action"]["type"] == "postback" for a in payload["areas"]))
-check("ทุก data เป็นคำสั่งเมนู", all(app.parse_cmd(a["action"]["data"]) for a in payload["areas"]))
-check("ขนาดริชเมนูถูกต้อง", payload["size"] == {"width": 2500, "height": 1686}, str(payload["size"]))
-# ตรวจว่าปุ่มไม่ล้นขอบเขต
-for a in payload["areas"]:
-    b = a["bounds"]
-    inside = b["x"] + b["width"] <= payload["size"]["width"] and b["y"] + b["height"] <= payload["size"]["height"]
-    check(f"ปุ่ม {a['action']['label']} อยู่ในขอบเขต", inside, str(b))
-check("ไม่มีการ import RichMenuRequest", "RichMenuRequest" not in open("app.py", encoding="utf-8").read().split("def ")[0])
+print("\n=== 5. ลบระบบริชเมนู ===")
+source = open("app.py", encoding="utf-8").read()
+check("ไม่มีฟังก์ชัน Rich Menu", not hasattr(app, "build_rich_menu_payload"))
+check("ไม่มี endpoint Rich Menu", not any("/api/richmenu" in str(rule) for rule in app.app.url_map.iter_rules()))
+check("ไม่มีการผูก Rich Menu ตอน follow", "RICH_MENU_ID" not in source and "richmenu" not in source.lower())
 
 print("\n=== 6. flex ปุ่มอัปโหลดสลิป ===")
 flex = app.build_upload_slip_prompt_flex(3, 2500.0)
-btns = flex.contents["footer"]["contents"]
+flex_json = flex.contents.as_json_dict()
+btns = flex_json["footer"]["contents"]
 check("มีปุ่มอัปโหลดสลิป + ยกเลิก", len(btns) == 2)
 check("ปุ่มแรกเป็น postback", btns[0]["action"]["type"] == "postback")
 check("ปุ่มแรกเรียก upload_slip", app.parse_cmd(btns[0]["action"]["data"]) == ("upload_slip", ["3"]))
 check("ปุ่มที่สองเรียก cancel", app.parse_cmd(btns[1]["action"]["data"]) == ("cancel", []))
 check("alt_text มีค่า", bool(flex.alt_text))
+close_flex = app.build_upload_slip_prompt_flex(None, 10000.0, is_early_close=True)
+close_button = close_flex.contents.as_json_dict()["footer"]["contents"][0]
+check("ปุ่มสลิปปิดยอดถูกแสดง", close_button["action"]["label"] == "📤 ส่งสลิปปิดยอด")
+check("ปุ่มสลิปปิดยอดส่งคำสั่งเฉพาะ", app.parse_cmd(close_button["action"]["data"]) == ("upload_slip", ["early_close"]))
 
 print("\n=== 7. ตัวแปรค่าตั้ง ===")
 check("STATE_AWAIT_SLIP", app.STATE_AWAIT_SLIP == "await_slip")
 check("TTL = 30 นาที", app.SLIP_STATE_TTL_MINUTES == 30, str(app.SLIP_STATE_TTL_MINUTES))
-check("ปิดโหมดพิมพ์เองเป็นค่าเริ่มต้น", app.ALLOW_LEGACY_TEXT_COMMANDS is False)
+check("ไม่มีโหมดรับข้อความพิมพ์เอง", not hasattr(app, "ALLOW_LEGACY_TEXT_COMMANDS"))
 check("เมนูหลักมี 4 ปุ่ม", len(app.MAIN_MENU_BUTTONS) == 4)
+check(
+    "อ่านสถานะ upload ปิดยอด",
+    app.get_state_payload({"payload": '{"payment_type":"early_close","amount":123.45}'})
+    == {"payment_type": "early_close", "amount": 123.45}
+)
 
 print("\n=== 8. ฟังก์ชันสำคัญถูกต้องครบ ===")
 required = ["set_user_state", "get_user_state", "clear_user_state", "get_active_contract",
             "get_state_installment_no", "run_command", "send_main_menu",
             "handle_upload_slip_request", "handle_cancel_pending", "send_payment_qr_next",
-            "handle_postback_event", "handle_follow_event", "line_api_request", "build_cmd", "parse_cmd"]
+            "handle_postback_event", "handle_follow_event", "build_cmd", "parse_cmd"]
 for fn in required:
     check(f"มีฟังก์ชัน {fn}", callable(getattr(app, fn, None)))
+
+print("\n=== 9. ข้อความพิมพ์เองทุกชนิดต้องไม่กระตุ้นบอท ===")
+original_run_command = app.run_command
+app.run_command = lambda *args: (_ for _ in ()).throw(AssertionError("ข้อความถูกส่งเข้า run_command"))
+for text in ["สวัสดี", "เช็คยอดค่างวด", "#BOTMENU#status"]:
+    event = SimpleNamespace(
+        message=SimpleNamespace(text=text),
+        source=SimpleNamespace(user_id="U-test"),
+        reply_token="reply-token"
+    )
+    try:
+        with redirect_stdout(StringIO()):
+            app.handle_message(event)
+        check(f"ไม่ตอบข้อความ: {text!r}", True)
+    except Exception as err:
+        check(f"ไม่ตอบข้อความ: {text!r}", False, str(err))
+app.run_command = original_run_command
 
 print("\n" + "=" * 50)
 print(f"ผ่าน {len(fails) == 0 and 'ทั้งหมด' or 'มีข้อผิดพลาด: ' + ', '.join(fails)}")

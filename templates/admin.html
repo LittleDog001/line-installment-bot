@@ -954,6 +954,9 @@
 
             rows.forEach(s => {
                 const amount = (s.slip_amount !== null && s.slip_amount !== undefined) ? s.slip_amount : s.installment_amount;
+                const paymentLabel = s.payment_type === 'early_close'
+                    ? 'ปิดยอดสัญญา'
+                    : `งวดที่ ${s.installment_no || '-'}`;
 
                 let statusBadge = "";
                 if (s.status === 'pending') {
@@ -976,7 +979,7 @@
                     </td>
                     <td><div class="small text-dark">${escapeHtml(s.phone || '-')}</div></td>
                     <td><div class="small text-dark">${escapeHtml(s.product_name || '-')}</div></td>
-                    <td><span class="badge bg-light text-dark border">งวดที่ ${s.installment_no || '-'}</span></td>
+                    <td><span class="badge bg-light text-dark border">${paymentLabel}</span></td>
                     <td class="fw-bold text-danger">฿${parseFloat(amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
                     <td class="small text-muted">${escapeHtml(s.created_at_formatted || '-')}</td>
                     <td>${statusBadge}${noteHtml}</td>
@@ -1017,6 +1020,9 @@
             }
 
             const amount = (slip.slip_amount !== null && slip.slip_amount !== undefined) ? slip.slip_amount : slip.installment_amount;
+            const paymentLabel = slip.payment_type === 'early_close'
+                ? 'ปิดยอดสัญญา'
+                : `งวดที่ ${slip.installment_no || '-'}`;
 
             document.getElementById("slip_detail_info").innerHTML = `
                 <div class="fw-bold text-info fs-5">${escapeHtml(slip.contract_number || '-')}</div>
@@ -1024,7 +1030,7 @@
                 <div class="small text-muted">สินค้า: ${escapeHtml(slip.product_name || '-')}</div>
                 <div class="small text-muted">ยอดชำระต่องวด: ฿${parseFloat(slip.installment_amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
                 <div class="small text-muted">ยอดในสลิป: <span class="fw-bold text-danger">฿${parseFloat(amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}</span></div>
-                <div class="small text-muted">งวดที่อ้างอิง: งวดที่ ${slip.installment_no || '-'}</div>
+                <div class="small text-muted">รายการที่อ้างอิง: ${paymentLabel}</div>
                 <div class="small text-muted">เวลาส่งสลิป: ${escapeHtml(slip.created_at_formatted || '-')}</div>
                 <div class="mt-2">${statusBadge}</div>
             `;
@@ -1034,25 +1040,33 @@
             const select = document.getElementById("slip_detail_installment");
             select.innerHTML = '<option value="">ไม่บันทึกว่าชำระแล้ว (ยืนยันสลิปอย่างเดียว)</option>';
 
-            const unpaid = (contract && contract.payments ? contract.payments : [])
-                .filter(p => p.status !== 'paid');
-
-            unpaid.forEach(p => {
+            if (slip.payment_type === 'early_close') {
                 const opt = document.createElement("option");
-                opt.value = p.installment_no;
-                opt.text = `งวดที่ ${p.installment_no} - ฿${parseFloat(p.amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
-                if (slip.installment_no && p.installment_no === slip.installment_no) {
-                    opt.selected = true;
+                opt.value = 'early_close';
+                opt.text = 'ปิดยอดสัญญาและบันทึกงวดคงเหลือว่าชำระแล้ว';
+                opt.selected = true;
+                select.appendChild(opt);
+            } else {
+                const unpaid = (contract && contract.payments ? contract.payments : [])
+                    .filter(p => p.status !== 'paid');
+
+                unpaid.forEach(p => {
+                    const opt = document.createElement("option");
+                    opt.value = p.installment_no;
+                    opt.text = `งวดที่ ${p.installment_no} - ฿${parseFloat(p.amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+                    if (slip.installment_no && p.installment_no === slip.installment_no) {
+                        opt.selected = true;
+                    }
+                    select.appendChild(opt);
+                });
+
+                if (unpaid.length === 0) {
+                    const opt = document.createElement("option");
+                    opt.value = "";
+                    opt.text = "ไม่มีรายการงวดค้างชำระ";
+                    opt.disabled = true;
+                    select.appendChild(opt);
                 }
-                select.appendChild(opt);
-            });
-
-            if (unpaid.length === 0) {
-                const opt = document.createElement("option");
-                opt.value = "";
-                opt.text = "ไม่มีรายการงวดค้างชำระ";
-                opt.disabled = true;
-                select.appendChild(opt);
             }
 
             const modalElement = document.getElementById("slipModal");
@@ -1076,15 +1090,19 @@
             if (!slipId) return;
 
             const installmentValue = document.getElementById("slip_detail_installment").value;
+            const slip = slipsData.find(s => s.id === parseInt(slipId));
+            if (!slip) return;
             const adminNote = document.getElementById("slip_detail_note").value.trim();
 
             if (action === 'reject') {
                 const note = adminNote || "ข้อมูลในสลิปไม่ชัดเจน / ไม่ตรงกับยอดที่ค้างชำระ";
                 if (!confirm(`ยืนยันการไม่อนุมัติสลิปนี้ใช่หรือไม่?\n\nเหตุผลที่จะแจ้งลูกค้า: ${note}`)) return;
             } else {
-                const confirmText = installmentValue
-                    ? `ยืนยันอนุมัติสลิปและบันทึกว่าชำระงวดที่ ${installmentValue} ใช่หรือไม่?`
-                    : "ยืนยันอนุมัติสลิปนี้ (โดยไม่บันทึกว่าชำระแล้ว) ใช่หรือไม่?";
+                const confirmText = slip.payment_type === 'early_close' && installmentValue === 'early_close'
+                    ? "ยืนยันอนุมัติสลิปและปิดยอดสัญญา โดยบันทึกงวดคงเหลือทั้งหมดว่าชำระแล้ว ใช่หรือไม่?"
+                    : installmentValue
+                        ? `ยืนยันอนุมัติสลิปและบันทึกว่าชำระงวดที่ ${installmentValue} ใช่หรือไม่?`
+                        : "ยืนยันอนุมัติสลิปนี้ (โดยไม่บันทึกว่าชำระแล้ว) ใช่หรือไม่?";
                 if (!confirm(confirmText)) return;
             }
 
@@ -1095,7 +1113,7 @@
                     body: JSON.stringify({
                         action: action,
                         admin_note: adminNote,
-                        installment_no: installmentValue || null,
+                        installment_no: slip.payment_type === 'early_close' ? null : installmentValue || null,
                         mark_as_paid: (action === 'approve' && installmentValue) ? 'true' : 'false'
                     })
                 });
