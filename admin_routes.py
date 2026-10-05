@@ -7,7 +7,7 @@ import random
 import string
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
-from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, jsonify, send_file
 from linebot import LineBotApi
 from linebot.models import TextSendMessage, FlexSendMessage
 
@@ -612,6 +612,252 @@ def send_custom_message_api(contract_id):
 @admin_bp.route('/contracts/<int:contract_id>/send_custom_message', methods=['POST'])
 def handle_send_custom_message_api(contract_id):
     return send_custom_message_api(contract_id)
+
+@admin_bp.route('/slip/<int:slip_id>/image', methods=['GET'])
+def get_slip_image(slip_id):
+    """ เปิดดูรูปสลิปการโอนเงินที่ลูกค้าส่งเข้ามา """
+    try:
+        conn = get_db()
+    except Exception as e:
+        return f"Database error: {str(e)}", 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT slip_image FROM payment_slips WHERE id = %s", (slip_id,))
+        slip = cursor.fetchone()
+
+        if not slip or not slip.get('slip_image'):
+            return "ไม่พบรูปสลิปนี้", 404
+
+        file_path = os.path.join('static', 'uploads', slip['slip_image'])
+        if not os.path.exists(file_path):
+            return "ไม่พบไฟล์รูปสลิปบนเซิร์ฟเวอร์", 404
+
+        return send_file(file_path, mimetype='image/jpeg')
+    except Exception as e:
+        return f"Error loading slip image: {str(e)}", 500
+    finally:
+        cursor.close()
+        conn.close()
+
+def process_slips_api():
+    """ ดึงรายการสลิปการโอนเงินทั้งหมด (ใช้แสดงในกล่องแจ้งเตือนหน้าหลังบ้าน) """
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT s.*, 
+                   c.contract_number, c.customer_name, c.phone, c.product_name, 
+                   c.total_installments, c.installment_amount, c.line_user_id AS contract_line_user_id
+            FROM payment_slips s
+            JOIN contracts c ON s.contract_id = c.id
+            ORDER BY 
+                CASE WHEN s.status = 'pending' THEN 0 ELSE 1 END,
+                s.created_at DESC
+            LIMIT 200
+        """)
+        slips = [dict(s) for s in cursor.fetchall()]
+
+        for slip in slips:
+            slip['slip_amount'] = float(slip['slip_amount']) if slip['slip_amount'] is not None else None
+            slip['installment_amount'] = float(slip['installment_amount']) if slip['installment_amount'] is not None else 0.0
+            if slip.get('created_at'):
+                slip['created_at_formatted'] = slip['created_at'].strftime('%d/%m/%Y %H:%M:%S')
+            else:
+                slip['created_at_formatted'] = '-'
+
+        return jsonify(slips)
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/slips', methods=['GET'])
+@admin_bp.route('/slips', methods=['GET'])
+def get_slips_api():
+    return process_slips_api()
+
+def process_slip_review_api(slip_id):
+    """ อนุมัติ (approve) หรือ ไม่อนุมัติ (reject) สลิปการโอนเงินจากหน้าหลังบ้าน """
+    try:
+        conn = get_db()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT s.*, c.contract_number, c.customer_name, c.product_name, c.line_user_id
+            FROM payment_slips s
+            JOIN contracts c ON s.contract_id = c.id
+            WHERE s.id = %s
+        """, (slip_id,))
+        slip = cursor.fetchone()
+
+        if not slip:
+            return jsonify({'error': 'ไม่พบข้อมูลสลิปนี้'}), 404
+
+        data = request.get_json(silent=True) or request.form
+        action = (data.get('action') or '').strip().lower()
+        admin_note = (data.get('admin_note') or '').strip()
+        mark_as_paid = str(data.get('mark_as_paid', 'true')).lower() in ['true', '1', 'yes', 'on']
+
+        if action not in ['approve', 'reject']:
+            return jsonify({'error': "action ต้องเป็น 'approve' หรือ 'reject'"}), 400
+
+        now_time = datetime.datetime.now(TH_TZ)
+
+        # ---- ปฏิเสธสลิป ----
+        if action == 'reject':
+            cursor.execute("""
+                UPDATE payment_slips
+                SET status = 'rejected', admin_note = %s, reviewed_at = %s
+                WHERE id = %s
+            """, (admin_note or None, now_time, slip_id))
+            conn.commit()
+
+            contract_line_user_id = slip.get('line_user_id')
+            if contract_line_user_id:
+                reject_body = (
+                    "ขออภัยครับ ทางร้านตรวจสอบรูปสลิปที่คุณส่งมาแล้ว แต่ยังไม่สามารถรับรองได้ในขณะนี้\n\n"
+                    f"📌 เหตุผล: {admin_note or 'ข้อมูลในสลิปไม่ชัดเจน / ไม่ตรงกับยอดที่ค้างชำระ'}\n\n"
+                    "กรุณาส่งรูปสลิปใหม่อีกครั้ง หรือทักมาที่ร้านเพื่อให้เจ้าหน้าที่ช่วยตรวจสอบครับ 🙏"
+                )
+                flex_reject = build_flex_message_ui(
+                    "❌ สลิปยังไม่ผ่านการตรวจสอบ",
+                    reject_body,
+                    contract_number=slip.get('contract_number'),
+                    product_name=slip.get('product_name'),
+                    color="#dc3545"
+                )
+                try:
+                    line_bot_api.push_message(contract_line_user_id, flex_reject)
+                except Exception as push_err:
+                    print(f"Error sending slip reject notification: {push_err}")
+
+            return jsonify({'message': 'ปฏิเสธสลิปเรียบร้อยแล้ว'})
+
+        # ---- อนุมัติสลิป ----
+        paid_payment = None
+
+        if mark_as_paid:
+            installment_no = data.get('installment_no') or slip.get('installment_no')
+
+            if installment_no:
+                cursor.execute(
+                    "SELECT * FROM payments WHERE contract_id = %s AND installment_no = %s",
+                    (slip['contract_id'], int(installment_no))
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1",
+                    (slip['contract_id'],)
+                )
+            payment = cursor.fetchone()
+
+            if not payment:
+                return jsonify({'error': 'ไม่พบรายการงวดที่จะบันทึกการชำระ'}), 400
+
+            if payment['status'] == 'paid':
+                paid_payment = dict(payment)
+                paid_payment['amount'] = float(payment['amount']) if payment['amount'] is not None else 0.0
+            else:
+                now_str = now_time.strftime('%Y-%m-%d %H:%M:%S')
+                receipt_no = f"REC-SLIP-{slip_id}-{payment['installment_no']}-{now_time.strftime('%M%S')}"
+                cursor.execute("""
+                    UPDATE payments
+                    SET status = 'paid', paid_at = %s, receipt_no = %s
+                    WHERE id = %s
+                """, (now_str, receipt_no, payment['id']))
+                paid_payment = dict(payment)
+                paid_payment['amount'] = float(payment['amount']) if payment['amount'] is not None else 0.0
+
+        target_installment_no = data.get('installment_no') or slip.get('installment_no')
+        cursor.execute("""
+            UPDATE payment_slips
+            SET status = 'approved', admin_note = %s, reviewed_at = %s,
+                installment_no = COALESCE(%s, installment_no)
+            WHERE id = %s
+        """, (admin_note or None, now_time, target_installment_no, slip_id))
+
+        # อัปเดตสถานะสัญญาให้ตรงกับที่ชำระจริง
+        contract_dict = None
+        cursor.execute("SELECT * FROM contracts WHERE id = %s", (slip['contract_id'],))
+        contract_row = cursor.fetchone()
+        if contract_row:
+            contract_dict = dict(contract_row)
+            calculate_contract_overdue_status(cursor, contract_dict)
+
+            cursor.execute(
+                "SELECT COUNT(*) AS total_paid FROM payments WHERE contract_id = %s AND status = 'paid'",
+                (slip['contract_id'],)
+            )
+            paid_count = cursor.fetchone()['total_paid']
+
+            if paid_count >= contract_dict['total_installments']:
+                cursor.execute(
+                    "UPDATE contracts SET status = 'closed' WHERE id = %s AND status NOT IN ('closed', 'closed_early', 'cancelled')",
+                    (slip['contract_id'],)
+                )
+
+        conn.commit()
+
+        contract_line_user_id = slip.get('line_user_id')
+
+        if contract_line_user_id:
+            if paid_payment and paid_payment.get('installment_no'):
+                approve_body = (
+                    "ได้รับการยืนยันยอดชำระเงินของคุณเรียบร้อยแล้วครับ ✅\n\n"
+                    f"🔢 งวดที่: {paid_payment['installment_no']}\n"
+                    f"💰 จำนวนเงิน: {paid_payment['amount']:,.2f} บาท\n\n"
+                    "ขอบคุณที่ชำระตรงเวลานะครับ 🙏✨"
+                )
+                flex_approve = build_flex_message_ui(
+                    "✅ ยืนยันการชำระเงินค่างวด",
+                    approve_body,
+                    contract_number=slip.get('contract_number'),
+                    product_name=slip.get('product_name'),
+                    color="#198754"
+                )
+            else:
+                approve_body = (
+                    "ทางร้านตรวจสอบรูปสลิปที่คุณส่งมาแล้ว ถือว่าได้รับการยืนยันครับ ✅\n\n"
+                    "หากมีการคิดยอดเพิ่มเติม ทางร้านจะแจ้งให้ทราบอีกครั้งครับ 🙏"
+                )
+                flex_approve = build_flex_message_ui(
+                    "✅ ตรวจสอบสลิปเรียบร้อยแล้ว",
+                    approve_body,
+                    contract_number=slip.get('contract_number'),
+                    product_name=slip.get('product_name'),
+                    color="#198754"
+                )
+
+            try:
+                line_bot_api.push_message(contract_line_user_id, flex_approve)
+            except Exception as push_err:
+                print(f"Error sending slip approve notification: {push_err}")
+
+        return jsonify({
+            'message': 'อนุมัติสลิปเรียบร้อยแล้ว',
+            'payment_marked_paid': bool(paid_payment and paid_payment.get('installment_no'))
+        })
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@admin_bp.route('/api/slips/<int:slip_id>/review', methods=['POST', 'PUT'])
+@admin_bp.route('/slips/<int:slip_id>/review', methods=['POST', 'PUT'])
+def review_slip_api(slip_id):
+    return process_slip_review_api(slip_id)
 
 @admin_bp.route('/contract_document/<int:contract_id>', methods=['GET'])
 def get_contract_document(contract_id):

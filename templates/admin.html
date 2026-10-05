@@ -166,6 +166,49 @@
             </div>
         </div>
 
+        <!-- Section: Payment Slip Alert Box ( UI แจ้งเตือนสลิปการโอนเงินที่ลูกค้าส่งเข้ามา) -->
+        <div class="row g-4 mb-4" id="slipAlertContainer" style="display: none;">
+            <div class="col-12">
+                <div class="card card-custom p-4 bg-white border-start border-info border-5 shadow-sm">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <h5 class="fw-bold text-info mb-0">
+                            <i class="fa-solid fa-receipt me-2"></i>แจ้งเตือน: ลูกค้าส่งสลิปการโอนเงินเข้ามา (รอตรวจสอบ)
+                        </h5>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-info text-dark rounded-pill" id="slipBillsBadge">0 รายการ</span>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button type="button" class="btn btn-outline-info active" id="slipFilterPendingBtn" onclick="setSlipFilter('pending')">
+                                    <i class="fa-solid fa-bell me-1"></i>รอตรวจสอบ
+                                </button>
+                                <button type="button" class="btn btn-outline-info" id="slipFilterAllBtn" onclick="setSlipFilter('all')">
+                                    <i class="fa-solid fa-list me-1"></i>ทั้งหมด
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr class="small text-muted">
+                                    <th>สัญญา/ลูกค้า</th>
+                                    <th>เบอร์โทร</th>
+                                    <th>สินค้า</th>
+                                    <th>งวดที่อ้างอิง</th>
+                                    <th>ยอดในสลิป</th>
+                                    <th>เวลาส่งสลิป</th>
+                                    <th>สถานะการตรวจสอบ</th>
+                                    <th class="text-center">ดำเนินการ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="slipBillsTableBody">
+                                <!-- Data rendered via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Section: Early Closed Bills Alert Box ( UI แจ้งเตือนบิลที่ปิดยอดก่อนกำหนด) -->
         <div class="row g-4 mb-4" id="earlyClosedAlertContainer" style="display: none;">
             <div class="col-12">
@@ -441,6 +484,65 @@
         </div>
     </div>
 
+    <!-- Modal: ตรวจสอบสลิปการโอนเงิน -->
+    <div class="modal fade" id="slipModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-receipt me-2"></i>ตรวจสอบสลิปการโอนเงิน</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <input type="hidden" id="slip_detail_id">
+
+                    <div class="row g-3">
+                        <div class="col-lg-7">
+                            <div class="card bg-light border-0 h-100">
+                                <div class="card-body text-center">
+                                    <div class="small text-muted mb-2"><i class="fa-solid fa-image me-1"></i>รูปสลิปที่ลูกค้าส่งเข้ามา</div>
+                                    <img id="slip_detail_image" src="" alt="รูปสลิปการโอนเงิน" class="img-fluid rounded border shadow-sm" style="max-height: 420px;">
+                                    <div class="mt-2">
+                                        <a id="slip_detail_image_link" href="#" target="_blank" class="btn btn-sm btn-outline-primary">
+                                            <i class="fa-solid fa-up-right-from-square me-1"></i>เปิดรูปขนาดเต็ม
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="card bg-light border-0 h-100">
+                                <div class="card-body">
+                                    <div id="slip_detail_info"></div>
+                                    <hr>
+                                    <div class="mb-2">
+                                        <label class="form-label small text-muted fw-bold">งวดที่ต้องการบันทึกว่า "ชำระแล้ว"</label>
+                                        <select id="slip_detail_installment" class="form-select form-select-sm"></select>
+                                        <div class="form-text small text-muted">เลือก "ไม่บันทึกว่าชำระแล้ว" หากต้องการแค่ยืนยันสลิป</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label small text-muted fw-bold">หมายเหตุจากผู้ดูแล (จะแจ้งลูกค้าเมื่อปฏิเสธ)</label>
+                                        <textarea id="slip_detail_note" class="form-control form-control-sm" rows="2" placeholder="เช่น ยอดไม่ตรงกับงวดที่ค้างชำระ, รูปไม่ชัดเจน..."></textarea>
+                                    </div>
+                                    <div class="d-grid gap-2">
+                                        <button class="btn btn-success fw-bold" onclick="reviewSlip('approve')">
+                                            <i class="fa-solid fa-check me-1"></i>อนุมัติสลิป
+                                        </button>
+                                        <button class="btn btn-outline-danger fw-bold" onclick="reviewSlip('reject')">
+                                            <i class="fa-solid fa-xmark me-1"></i>ไม่อนุมัติสลิป
+                                        </button>
+                                        <button class="btn btn-outline-secondary fw-bold" onclick="openManageModalFromSlip()">
+                                            <i class="fa-solid fa-receipt me-1"></i>เปิดจัดการบิลของสัญญานี้
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal 2: Edit Contract Info -->
     <div class="modal fade" id="editContractModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
@@ -505,20 +607,44 @@
         </div>
     </div>
 
+    <!-- Toast Notification: สลิปการโอนเงินเข้ามาใหม่ -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1090;">
+        <div id="slipToast" class="toast align-items-center text-bg-info border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <i class="fa-solid fa-bell me-2"></i><span id="slipToastBody">มีสลิปการโอนเงินใหม่</span>
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="ปิด"></button>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
         let contractsData = [];
         let currentContract = null;
+        let slipsData = [];
+        let currentSlipFilter = 'pending';
+        let slipRefreshTimer = null;
 
         const THAI_MONTHS = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
 
         document.addEventListener("DOMContentLoaded", () => {
             loadContractsData();
+            loadSlipsData();
 
             document.getElementById("addContractForm").addEventListener("submit", handleAddContract);
             document.getElementById("editContractForm").addEventListener("submit", handleEditContract);
+
+            // ตรวจสอบสลิปใหม่อัตโนมัติทุก 30 วินาที (ไม่รีเฟรชตอนเปิด Modal ตรวจสอบสลิปอยู่)
+            slipRefreshTimer = setInterval(() => {
+                const slipModalEl = document.getElementById("slipModal");
+                if (!slipModalEl || !slipModalEl.classList.contains("show")) {
+                    loadSlipsData(true);
+                }
+            }, 30000);
         });
 
         function toggleCalcType() {
@@ -725,6 +851,267 @@
             });
 
             document.getElementById("unpaidBillsBadge").innerText = `${count} รายการ`;
+        }
+
+        function setSlipFilter(filter) {
+            currentSlipFilter = filter;
+
+            const pendingBtn = document.getElementById("slipFilterPendingBtn");
+            const allBtn = document.getElementById("slipFilterAllBtn");
+            if (pendingBtn && allBtn) {
+                pendingBtn.classList.toggle("active", filter === 'pending');
+                allBtn.classList.toggle("active", filter === 'all');
+            }
+
+            renderSlipsTable();
+        }
+
+        async function loadSlipsData(silent = false) {
+            try {
+                const res = await fetch("/admin/api/slips");
+                if (!res.ok) throw new Error("Failed to load slips");
+                const data = await res.json();
+
+                if (!Array.isArray(data)) {
+                    if (!silent) console.error("Unexpected slips payload:", data);
+                    return;
+                }
+
+                const hadPending = slipsData.filter(s => s.status === 'pending').length;
+                slipsData = data;
+                const hasPending = slipsData.filter(s => s.status === 'pending').length;
+
+                renderSlipsTable();
+
+                // แจ้งเตือนเมื่อมีสลิปใหม่เข้ามาระหว่างที่หน้าเปิดอยู่
+                if (silent && hasPending > hadPending) {
+                    showSlipToast(`มีสลิปการโอนเงินใหม่ ${hasPending - hadPending} รายการ รอตรวจสอบ`);
+                }
+            } catch (err) {
+                if (!silent) console.error("Error loading slips:", err);
+            }
+        }
+
+        function showSlipToast(message) {
+            const toastEl = document.getElementById("slipToast");
+            const toastBody = document.getElementById("slipToastBody");
+            if (!toastEl || !toastBody) return;
+
+            toastBody.textContent = message;
+            const toast = new bootstrap.Toast(toastEl, { delay: 6000, autohide: true });
+            toast.show();
+        }
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function openManageModalByContract(contractId) {
+            if (!contractId) return;
+            bootstrap.Modal.getInstance(document.getElementById("slipModal"))?.hide();
+            openManageModal(contractId);
+        }
+
+        function renderSlipsTable() {
+            const tbody = document.getElementById("slipBillsTableBody");
+            const container = document.getElementById("slipAlertContainer");
+            const badge = document.getElementById("slipBillsBadge");
+            if (!tbody || !container) return;
+
+            tbody.innerHTML = "";
+
+            const pendingCount = slipsData.filter(s => s.status === 'pending').length;
+
+            // กล่องแจ้งเตือนจะแสดงเมื่อมีสลิปค้างอยู่ หรือผู้ดูแลเลือกดูทั้งหมด
+            if (currentSlipFilter === 'all' || pendingCount > 0) {
+                container.style.display = "block";
+            } else {
+                container.style.display = "none";
+            }
+
+            if (badge) {
+                badge.innerText = currentSlipFilter === 'all'
+                    ? `${slipsData.length} รายการ`
+                    : `${pendingCount} รายการ`;
+            }
+
+            const rows = currentSlipFilter === 'pending'
+                ? slipsData.filter(s => s.status === 'pending')
+                : slipsData;
+
+            if (rows.length === 0) {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `<td colspan="8" class="text-center text-muted py-4">ไม่มีรายการสลิปการโอนเงินในขณะนี้</td>`;
+                tbody.appendChild(tr);
+                return;
+            }
+
+            rows.forEach(s => {
+                const amount = (s.slip_amount !== null && s.slip_amount !== undefined) ? s.slip_amount : s.installment_amount;
+
+                let statusBadge = "";
+                if (s.status === 'pending') {
+                    statusBadge = '<span class="badge bg-warning text-dark"><i class="fa-solid fa-bell me-1"></i>รอตรวจสอบสลิป</span>';
+                } else if (s.status === 'approved') {
+                    statusBadge = '<span class="badge bg-success">อนุมัติแล้ว</span>';
+                } else {
+                    statusBadge = '<span class="badge bg-danger">ไม่อนุมัติ</span>';
+                }
+
+                const noteHtml = s.admin_note
+                    ? `<div class="small text-muted"><i class="fa-solid fa-note-sticky me-1"></i>${escapeHtml(s.admin_note)}</div>`
+                    : '';
+
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>
+                        <div class="fw-bold text-info">${escapeHtml(s.contract_number || '-')}</div>
+                        <div class="small text-dark">${escapeHtml(s.customer_name || '-')}</div>
+                    </td>
+                    <td><div class="small text-dark">${escapeHtml(s.phone || '-')}</div></td>
+                    <td><div class="small text-dark">${escapeHtml(s.product_name || '-')}</div></td>
+                    <td><span class="badge bg-light text-dark border">งวดที่ ${s.installment_no || '-'}</span></td>
+                    <td class="fw-bold text-danger">฿${parseFloat(amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}</td>
+                    <td class="small text-muted">${escapeHtml(s.created_at_formatted || '-')}</td>
+                    <td>${statusBadge}${noteHtml}</td>
+                    <td class="text-center action-btn-group">
+                        <button class="btn btn-sm ${s.status === 'pending' ? 'btn-primary' : 'btn-outline-secondary'} fw-bold me-1" onclick="openSlipModal(${s.id})">
+                            <i class="fa-solid fa-eye me-1"></i>ดูสลิป
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="openManageModalByContract(${s.contract_id})" title="จัดการบิล">
+                            <i class="fa-solid fa-receipt"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function openSlipModal(slipId) {
+            const slip = slipsData.find(s => s.id === slipId);
+            if (!slip) {
+                alert("ไม่พบข้อมูลสลิปนี้");
+                return;
+            }
+
+            document.getElementById("slip_detail_id").value = slip.id;
+
+            const imageUrl = `/admin/slip/${slip.id}/image`;
+            document.getElementById("slip_detail_image").src = imageUrl;
+            document.getElementById("slip_detail_image_link").href = imageUrl;
+            document.getElementById("slip_detail_note").value = slip.admin_note || "";
+
+            let statusBadge = "";
+            if (slip.status === 'pending') {
+                statusBadge = '<span class="badge bg-warning text-dark">รอตรวจสอบสลิป</span>';
+            } else if (slip.status === 'approved') {
+                statusBadge = '<span class="badge bg-success">อนุมัติแล้ว</span>';
+            } else {
+                statusBadge = '<span class="badge bg-danger">ไม่อนุมัติ</span>';
+            }
+
+            const amount = (slip.slip_amount !== null && slip.slip_amount !== undefined) ? slip.slip_amount : slip.installment_amount;
+
+            document.getElementById("slip_detail_info").innerHTML = `
+                <div class="fw-bold text-info fs-5">${escapeHtml(slip.contract_number || '-')}</div>
+                <div class="small text-dark fw-bold mb-2">${escapeHtml(slip.customer_name || '-')} (${escapeHtml(slip.phone || '-')})</div>
+                <div class="small text-muted">สินค้า: ${escapeHtml(slip.product_name || '-')}</div>
+                <div class="small text-muted">ยอดชำระต่องวด: ฿${parseFloat(slip.installment_amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
+                <div class="small text-muted">ยอดในสลิป: <span class="fw-bold text-danger">฿${parseFloat(amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}</span></div>
+                <div class="small text-muted">งวดที่อ้างอิง: งวดที่ ${slip.installment_no || '-'}</div>
+                <div class="small text-muted">เวลาส่งสลิป: ${escapeHtml(slip.created_at_formatted || '-')}</div>
+                <div class="mt-2">${statusBadge}</div>
+            `;
+
+            // เตรียมรายการงวดที่ยังไม่ชำระ ให้ผู้ดูแลเลือกได้
+            const contract = contractsData.find(c => c.id === slip.contract_id);
+            const select = document.getElementById("slip_detail_installment");
+            select.innerHTML = '<option value="">ไม่บันทึกว่าชำระแล้ว (ยืนยันสลิปอย่างเดียว)</option>';
+
+            const unpaid = (contract && contract.payments ? contract.payments : [])
+                .filter(p => p.status !== 'paid');
+
+            unpaid.forEach(p => {
+                const opt = document.createElement("option");
+                opt.value = p.installment_no;
+                opt.text = `งวดที่ ${p.installment_no} - ฿${parseFloat(p.amount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+                if (slip.installment_no && p.installment_no === slip.installment_no) {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+
+            if (unpaid.length === 0) {
+                const opt = document.createElement("option");
+                opt.value = "";
+                opt.text = "ไม่มีรายการงวดค้างชำระ";
+                opt.disabled = true;
+                select.appendChild(opt);
+            }
+
+            const modalElement = document.getElementById("slipModal");
+            let modal = bootstrap.Modal.getInstance(modalElement);
+            if (!modal) {
+                modal = new bootstrap.Modal(modalElement);
+            }
+            modal.show();
+        }
+
+        function openManageModalFromSlip() {
+            const slipId = document.getElementById("slip_detail_id").value;
+            const slip = slipsData.find(s => s.id === parseInt(slipId));
+            if (!slip) return;
+            bootstrap.Modal.getInstance(document.getElementById("slipModal"))?.hide();
+            openManageModal(slip.contract_id);
+        }
+
+        async function reviewSlip(action) {
+            const slipId = document.getElementById("slip_detail_id").value;
+            if (!slipId) return;
+
+            const installmentValue = document.getElementById("slip_detail_installment").value;
+            const adminNote = document.getElementById("slip_detail_note").value.trim();
+
+            if (action === 'reject') {
+                const note = adminNote || "ข้อมูลในสลิปไม่ชัดเจน / ไม่ตรงกับยอดที่ค้างชำระ";
+                if (!confirm(`ยืนยันการไม่อนุมัติสลิปนี้ใช่หรือไม่?\n\nเหตุผลที่จะแจ้งลูกค้า: ${note}`)) return;
+            } else {
+                const confirmText = installmentValue
+                    ? `ยืนยันอนุมัติสลิปและบันทึกว่าชำระงวดที่ ${installmentValue} ใช่หรือไม่?`
+                    : "ยืนยันอนุมัติสลิปนี้ (โดยไม่บันทึกว่าชำระแล้ว) ใช่หรือไม่?";
+                if (!confirm(confirmText)) return;
+            }
+
+            try {
+                const res = await fetch(`/admin/api/slips/${slipId}/review`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        action: action,
+                        admin_note: adminNote,
+                        installment_no: installmentValue || null,
+                        mark_as_paid: (action === 'approve' && installmentValue) ? 'true' : 'false'
+                    })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    alert(data.message || "บันทึกผลการตรวจสอบสลิปเรียบร้อยแล้ว");
+                    bootstrap.Modal.getInstance(document.getElementById("slipModal"))?.hide();
+                    await loadSlipsData();
+                    await loadContractsData();
+                } else {
+                    alert("ข้อผิดพลาด: " + (data.error || "ไม่สามารถบันทึกผลได้"));
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
+            }
         }
 
         function renderEarlyClosedBillsTable(data) {

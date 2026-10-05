@@ -11,7 +11,7 @@ from flask import Flask, request, abort, render_template, jsonify, send_file
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage, FlexSendMessage, ImageSendMessage, QuickReply, QuickReplyButton, MessageAction
+    MessageEvent, TextMessage, ImageMessage, TextSendMessage, FlexSendMessage, ImageSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
 from promptpay import qrcode
 import qrcode as qrcode_lib
@@ -19,7 +19,8 @@ import qrcode as qrcode_lib
 from admin_routes import (
     admin_bp, process_contracts_api, process_contract_detail_api, 
     process_payments_by_contract_api, pay_contract_installment_api, unpay_contract_installment_api,
-    build_flex_message_ui, send_custom_message_api
+    build_flex_message_ui, send_custom_message_api,
+    process_slips_api, process_slip_review_api, get_slip_image
 )
 
 app = Flask(__name__)
@@ -96,6 +97,28 @@ def init_db():
             receipt_no VARCHAR(100)
         );
     ''')
+
+    # ตารางสลิปการโอนเงินที่ลูกค้าส่งรูปเข้ามาทาง LINE (ใช้แจ้งเตือนหลังบ้าน)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS payment_slips (
+            id SERIAL PRIMARY KEY,
+            contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+            line_user_id VARCHAR(100),
+            message_id VARCHAR(255),
+            slip_image VARCHAR(255),
+            slip_amount NUMERIC(12, 2),
+            installment_no INTEGER,
+            status VARCHAR(50) DEFAULT 'pending',
+            admin_note TEXT,
+            reviewed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    ''')
+    cursor.execute('ALTER TABLE payment_slips ADD COLUMN IF NOT EXISTS slip_amount NUMERIC(12, 2);')
+    cursor.execute('ALTER TABLE payment_slips ADD COLUMN IF NOT EXISTS installment_no INTEGER;')
+    cursor.execute('ALTER TABLE payment_slips ADD COLUMN IF NOT EXISTS admin_note TEXT;')
+    cursor.execute('ALTER TABLE payment_slips ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_payment_slips_status ON payment_slips (status);")
     conn.commit()
     cursor.close()
     conn.close()
@@ -247,6 +270,18 @@ def root_api_pay(contract_id):
 @app.route('/api/contracts/<int:contract_id>/unpay', methods=['POST', 'PUT'])
 def root_api_unpay(contract_id):
     return unpay_contract_installment_api(contract_id)
+
+@app.route('/api/slips', methods=['GET'])
+def root_api_slips():
+    return process_slips_api()
+
+@app.route('/api/slips/<int:slip_id>/review', methods=['POST', 'PUT'])
+def root_api_review_slip(slip_id):
+    return process_slip_review_api(slip_id)
+
+@app.route('/slip/<int:slip_id>/image', methods=['GET'])
+def root_slip_image(slip_id):
+    return get_slip_image(slip_id)
 
 @app.route('/api/cron/check-due-payments', methods=['GET', 'POST'])
 def trigger_due_notifications():
@@ -494,6 +529,150 @@ def handle_message(event):
         send_early_close_qr(user_id, event.reply_token)
     else:
         search_contract_and_reply(user_id, user_text, event.reply_token)
+
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image_message(event):
+    """ ลูกค้าส่งรูปภาพสลิปการโอนเงินเข้ามา -> บันทึกสลิป + แจ้งเตือนหลังบ้าน """
+    user_id = event.source.user_id
+    message_id = event.message.id
+
+    try:
+        image_content = line_bot_api.get_message_content(message_id)
+    except Exception as e:
+        print(f"Error downloading LINE image content: {e}")
+        flex_msg = build_flex_message_ui("⚠️ ไม่สามารถอ่านรูปได้", "ไม่สามารถดาวน์โหลดรูปที่คุณส่งมาได้ กรุณาส่งรูปสลิปอีกครั้งครับ", color="#dc3545")
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
+
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"DB Error on handle_image_message: {e}")
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล", color="#dc3545")
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1",
+            (user_id,)
+        )
+        contract = cursor.fetchone()
+
+        if not contract:
+            body_text = (
+                "ได้รับรูปที่คุณส่งมาแล้วครับ แต่ยังไม่พบสัญญาที่ผูกกับบัญชี LINE นี้\n\n"
+                "💡 กรุณาพิมพ์ 'เบอร์โทรศัพท์', 'เลขบัตรประชาชน' หรือ 'ชื่อ-นามสกุล' "
+                "ที่ใช้ทำสัญญา เพื่อให้เจ้าหน้าที่ตรวจสอบสลิปให้คุณได้อย่างรวดเร็วครับ"
+            )
+            flex_msg = build_flex_message_ui("ℹ️ ยังไม่พบข้อมูลสัญญา", body_text, color="#6c757d")
+            flex_msg.quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด"))
+            ])
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+            return
+
+        # บันทึกรูปสลิปลง static/uploads
+        now_time = datetime.datetime.now(TH_TZ)
+        ext = 'jpg'
+        content_type = getattr(image_content, 'content_type', '') or ''
+        if 'png' in content_type:
+            ext = 'png'
+
+        upload_folder = os.path.join('static', 'uploads')
+        os.makedirs(upload_folder, exist_ok=True)
+        slip_filename = f"slip_{now_time.strftime('%Y%m%d%H%M%S')}_{user_id[-6:]}.{ext}"
+        with open(os.path.join(upload_folder, slip_filename), 'wb') as f:
+            f.write(image_content.content)
+
+        # หางวดที่ค้างชำระอยู่ เพื่ออ้างอิงให้ผู้ดูแลตรวจสอบ
+        cursor.execute(
+            "SELECT installment_no, amount FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1",
+            (contract['id'],)
+        )
+        next_payment = cursor.fetchone()
+
+        slip_amount = float(next_payment['amount']) if next_payment and next_payment.get('amount') else None
+        installment_no = next_payment['installment_no'] if next_payment else None
+
+        cursor.execute("""
+            INSERT INTO payment_slips (contract_id, line_user_id, message_id, slip_image, slip_amount, installment_no, status)
+            VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+            RETURNING id
+        """, (contract['id'], user_id, message_id, slip_filename, slip_amount, installment_no))
+        slip_row = cursor.fetchone()
+        slip_id = slip_row['id']
+        conn.commit()
+
+        # ตอบกลับลูกค้าว่าได้รับสลิปแล้ว
+        amount_text = f"{slip_amount:,.2f} บาท" if slip_amount else "-"
+        reply_body = (
+            "ได้รับรูปสลิปการโอนเงินของคุณเรียบร้อยแล้วครับ ✅\n\n"
+            f"💰 ยอดที่ระบุ: {amount_text}\n"
+            f"🔢 งวดที่: งวดที่ {installment_no if installment_no else '-'}\n\n"
+            "เจ้าหน้าที่จะตรวจสอบยอดเงินและแจ้งกลับคุณโดยเร็วที่สุดครับ 🙏"
+        )
+        flex_reply = build_flex_message_ui(
+            "🧾 ได้รับสลิปการโอนเงินแล้ว",
+            reply_body,
+            contract_number=contract.get('contract_number'),
+            product_name=contract.get('product_name'),
+            color="#198754"
+        )
+        flex_reply.quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด"))
+        ])
+        line_bot_api.reply_message(event.reply_token, flex_reply)
+
+        # แจ้งเตือนผู้ดูแลระบบทาง LINE (ใช้รูปแบบเดียวกับการแจ้งเตือนปิดยอดก่อนกำหนด)
+        print(
+            f"[ADMIN NOTIFICATION] 🧾 ลูกค้าส่งสลิปการโอนเงิน! สัญญาเลขที่: {contract['contract_number']} | "
+            f"ลูกค้า: {contract['customer_name']} ({contract['phone']}) | งวดที่: {installment_no} | "
+            f"ยอด: {amount_text} | รหัสสลิป: {slip_id}"
+        )
+        notify_admin_new_slip(contract, slip_id, installment_no, slip_amount, now_time)
+    except Exception as e:
+        conn.rollback()
+        print(f"Error handling slip image: {e}")
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการบันทึกสลิป กรุณาส่งรูปใหม่อีกครั้งหรือติดต่อทางร้านครับ", color="#dc3545")
+        try:
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+        except Exception as reply_err:
+            print(f"Error replying slip error message: {reply_err}")
+    finally:
+        cursor.close()
+        conn.close()
+
+def notify_admin_new_slip(contract, slip_id, installment_no, slip_amount, slip_time):
+    """ แจ้งเตือนผู้ดูแลระบบเมื่อมีลูกค้าส่งสลิปการโอนเงินเข้ามาใหม่ """
+    admin_line_id = os.environ.get('ADMIN_LINE_USER_ID')
+    if not admin_line_id:
+        return
+
+    amount_text = f"{slip_amount:,.2f} บาท" if slip_amount else "ไม่ระบุ"
+    admin_msg = (
+        "🧾 ลูกค้าส่งสลิปการโอนเงินเข้ามา!\n"
+        f"เลขที่สัญญา: {contract['contract_number']}\n"
+        f"ชื่อลูกค้า: {contract['customer_name']}\n"
+        f"เบอร์โทร: {contract['phone']}\n"
+        f"สินค้า: {contract['product_name']}\n"
+        f"งวดที่: งวดที่ {installment_no if installment_no else '-'}\n"
+        f"ยอดที่ระบุ: {amount_text}\n"
+        f"เวลาส่ง: {slip_time.strftime('%d/%m/%Y %H:%M:%S')}\n\n"
+        "กรุณาตรวจสอบรูปสลิปในระบบหลังบ้านครับ"
+    )
+    try:
+        flex_admin = build_flex_message_ui(
+            title="🧾 แจ้งเตือนลูกค้าส่งสลิปการโอนเงิน",
+            body_text=admin_msg,
+            contract_number=contract.get('contract_number'),
+            product_name=contract.get('product_name'),
+            color="#0dcaf0"
+        )
+        line_bot_api.push_message(admin_line_id, flex_admin)
+    except Exception as push_err:
+        print(f"Error pushing admin slip alert: {push_err}")
 
 def notify_admin_early_close(user_id, trigger_text):
     try:
