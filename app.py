@@ -6,6 +6,7 @@ import calendar
 import urllib.parse
 import psycopg2
 import werkzeug
+import requests
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
 from flask import Flask, request, abort, render_template, jsonify, send_file
@@ -13,8 +14,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, ImageMessage, TextSendMessage, FlexSendMessage, ImageSendMessage,
-    QuickReply, QuickReplyButton, MessageAction, PostbackAction, PostbackEvent, FollowEvent,
-    RichMenuRequest, RichMenuArea, RichMenuBound, RichMenuSize
+    QuickReply, QuickReplyButton, MessageAction, PostbackAction, PostbackEvent, FollowEvent
 )
 from promptpay import qrcode
 import qrcode as qrcode_lib
@@ -34,6 +34,7 @@ TH_TZ = ZoneInfo('Asia/Bangkok')
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
 PROMPTPAY_ID = os.environ.get('PROMPTPAY_ID', '0800000000')
+LINE_API_BASE_URL = os.environ.get('LINE_API_BASE_URL', 'https://api.line.me').rstrip('/')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -66,6 +67,26 @@ MAIN_MENU_BUTTONS = [
     ("ปิดยอดก่อนกำหนด", CMD_EARLY_CLOSE),
     ("ข้อมูลสัญญา", CMD_CONTRACT),
 ]
+
+# ข้อความแนะนำเมนู (ใช้ตอนต้อนรับสมาชิกใหม่ และตอนกดเมนูหลัก)
+WELCOME_BODY_TEXT = (
+    "สวัสดีครับ ยินดีต้อนรับสู่ระบบผ่อนชำระสินค้า 🙏\n\n"
+    "กรุณาเลือกเมนูด้านล่าง (หรือริชเมนูด้านซ้าย) เพื่อใช้งานครับ\n\n"
+    "• เช็คยอดค่างวด – ดูสถานะสัญญาและงวดถัดไป\n"
+    "• ชำระงวดถัดไป – รับ QR Code สำหรับชำระเงิน\n"
+    "• ปิดยอดก่อนกำหนด – ปิดสัญญาพร้อมส่วนลด 15%\n"
+    "• ข้อมูลสัญญา – ดูรายละเอียดสัญญาทั้งหมด\n\n"
+    "⚠️ ระบบจะตอบกลับเฉพาะเมื่อกดปุ่มเมนูเท่านั้น เพื่อป้องกันการส่งข้อความรบกวน"
+)
+
+MENU_BODY_TEXT = (
+    "กรุณาเลือกเมนูที่ต้องการจากปุ่มด้านล่างครับ\n\n"
+    "• เช็คยอดค่างวด – ดูสถานะสัญญาและงวดถัดไป\n"
+    "• ชำระงวดถัดไป – รับ QR Code สำหรับชำระเงิน\n"
+    "• ปิดยอดก่อนกำหนด – ปิดสัญญาพร้อมส่วนลด 15%\n"
+    "• ข้อมูลสัญญา – ดูรายละเอียดสัญญาทั้งหมด\n\n"
+    "⚠️ ระบบจะตอบกลับเฉพาะเมื่อกดปุ่มเมนูเท่านั้น"
+)
 
 # สถานะค้างของลูกค้า: รอส่งรูปสลิป (ต้องกดปุ่มอัปโหลดสลิปมาก่อนเท่านั้น)
 STATE_AWAIT_SLIP = 'await_slip'
@@ -108,6 +129,60 @@ def build_quick_reply(items):
         # LINE กำหนดให้ label ของ Quick Reply ไม่เกิน 20 ตัวอักษร
         buttons.append(QuickReplyButton(action=PostbackAction(label=label[:20], data=build_cmd(action, *args))))
     return QuickReply(items=buttons) if buttons else None
+
+
+# ============================================================================
+# ตัวช่วยเรียก LINE Messaging REST API โดยตรง (สำหรับ Rich Menu)
+# ---------------------------------------------------------------------------
+# เหตุผลที่ไม่ใช้คลาส RichMenu* จาก linebot.models:
+#   SDK บางเวอร์ชัน (รวมถึงเวอร์ชันที่ติดตั้งบน Render) ไม่ได้ export
+#   RichMenuRequest / RichMenuArea / RichMenuBound / RichMenuSize ออกมา
+#   ทำให้เกิด ImportError ตอนสตาร์ทแอป โดยการเรียก REST API ตรง ๆ
+#   จะไม่ผูกกับเวอร์ชันของ SDK เลย
+# ============================================================================
+def line_api_request(method, path, json_body=None, timeout=15):
+    """ เรียก LINE Messaging API โดยตรง -> (status_code, response_json_or_text) """
+    url = f"{LINE_API_BASE_URL}{path}"
+    headers = {
+        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+    try:
+        response = requests.request(
+            method, url, headers=headers, json=json_body, timeout=timeout
+        )
+    except requests.RequestException as e:
+        print(f"LINE API network error [{method} {path}]: {e}")
+        return 0, {'error': str(e)}
+
+    try:
+        return response.status_code, response.json()
+    except ValueError:
+        return response.status_code, {'message': response.text}
+
+
+def build_rich_menu_payload():
+    """ สร้าง payload ริชเมนูหลัก
+        ทุกปุ่มใช้ action แบบ postback เพื่อให้ระบบรู้ว่าลูกค้ากดปุ่มจริง (ป้องกันบอท)
+        และไม่ต้องพิมพ์ข้อความใด ๆ ในห้องแชท """
+    def area(x, y, label, action):
+        return {
+            "bounds": {"x": x, "y": y, "width": 1250, "height": 843},
+            "action": {"type": "postback", "label": label, "data": build_cmd(action)}
+        }
+
+    return {
+        "size": {"width": 2500, "height": 1686},
+        "selected": False,
+        "name": "เมนูผ่อนชำระ",
+        "chatBarText": "เมนูหลัก",
+        "areas": [
+            area(0, 0, "เช็คยอดค่างวด", CMD_STATUS),
+            area(1250, 0, "ชำระงวดถัดไป", CMD_PAY_NEXT),
+            area(0, 843, "ปิดยอดก่อนกำหนด", CMD_EARLY_CLOSE),
+            area(1250, 843, "ข้อมูลสัญญา", CMD_CONTRACT),
+        ]
+    }
 
 
 def get_db():
@@ -629,11 +704,11 @@ def send_simple_push_notification(user_id, text_msg, title="📢 แจ้งเ
 def send_line_push_notification(user_id, text_msg, installment_no, amount, title="📢 แจ้งเตือน", contract_number="", product_name="", color="#0d6efd"):
     try:
         flex_msg = build_flex_message_ui(title, text_msg, contract_number, product_name, color)
-        quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label=f"ชำระงวดที่ {installment_no}", text=f"ชำระงวดที่ {installment_no}")),
-            QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด"))
+        # ใช้ปุ่มเมนู (postback) เท่านั้น เพื่อให้บอททำงานเฉพาะตอนลูกค้ากดปุ่ม
+        flex_msg.quick_reply = build_quick_reply([
+            (f"ชำระงวดที่ {installment_no}", CMD_PAY, installment_no),
+            ("เช็คยอดค่างวด", CMD_STATUS)
         ])
-        flex_msg.quick_reply = quick_reply
         line_bot_api.push_message(user_id, flex_msg)
     except Exception as e:
         print(f"Error sending Push Message to {user_id}: {e}")
@@ -713,33 +788,170 @@ def callback():
         abort(400)
     return 'OK'
 
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    user_text = event.message.text.strip()
-    user_id = event.source.user_id
+def run_command(action, args, user_id, reply_token):
+    """ จัดการคำสั่งที่มาจากปุ่มเมนู (Quick Reply / Flex Button / Rich Menu) """
+    try:
+        if action == CMD_STATUS:
+            send_contract_status(user_id, reply_token)
 
+        elif action == CMD_CONTRACT:
+            send_contract_only(user_id, reply_token)
+
+        elif action == CMD_MENU:
+            send_main_menu(user_id, reply_token)
+
+        elif action == CMD_PAY:
+            try:
+                installment_no = int(str(args[0]).strip()) if args else None
+            except (TypeError, ValueError):
+                installment_no = None
+
+            if not installment_no:
+                flex_msg = build_flex_message_ui("⚠️ แจ้งเตือน", "รูปแบบคำสั่งไม่ถูกต้องครับ", color="#dc3545")
+                flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
+                line_bot_api.reply_message(reply_token, flex_msg)
+                return
+
+            send_payment_qr(user_id, installment_no, reply_token)
+
+        elif action == CMD_PAY_NEXT:
+            send_payment_qr_next(user_id, reply_token)
+
+        elif action == CMD_EARLY_CLOSE:
+            notify_admin_early_close(user_id, "ปิดยอดก่อนกำหนด (เลือกจากปุ่มเมนู)")
+            send_early_close_qr(user_id, reply_token)
+
+        elif action == CMD_UPLOAD_SLIP:
+            handle_upload_slip_request(user_id, reply_token, args)
+
+        elif action == CMD_CANCEL:
+            handle_cancel_pending(user_id, reply_token)
+
+        else:
+            print(f"[WARN] คำสั่งเมนูที่ไม่รู้จัก: '{action}' (user={user_id})")
+            send_main_menu(user_id, reply_token)
+
+    except Exception as e:
+        print(f"Error running command '{action}' for {user_id}: {e}")
+        try:
+            flex_msg = build_flex_message_ui(
+                "⚠️ ข้อผิดพลาด",
+                "เกิดข้อผิดพลาดในการดำเนินการ กรุณาลองใหม่อีกครั้งหรือติดต่อทางร้านครับ",
+                color="#dc3545"
+            )
+            line_bot_api.reply_message(reply_token, flex_msg)
+        except Exception:
+            pass
+
+
+def handle_legacy_text_command(user_id, user_text, reply_token):
+    """ โหมดสำรองแบบเดิม (พิมพ์ข้อความเอง) ต้องตั้งค่า ALLOW_LEGACY_TEXT_COMMANDS=true ถึงจะทำงาน """
     if user_text in ["เช็คยอด", "เช็คค่างวด", "เมนู"]:
-        send_contract_status(user_id, event.reply_token)
+        send_contract_status(user_id, reply_token)
     elif user_text == "สัญญา":
-        send_contract_only(user_id, event.reply_token)
+        send_contract_only(user_id, reply_token)
     elif user_text.startswith("ชำระงวดที่"):
         try:
             installment_no = int(user_text.replace("ชำระงวดที่", "").strip())
-            send_payment_qr(user_id, installment_no, event.reply_token)
+            send_payment_qr(user_id, installment_no, reply_token)
         except ValueError:
             flex_msg = build_flex_message_ui("⚠️ แจ้งเตือน", "รูปแบบคำสั่งไม่ถูกต้องครับ", color="#dc3545")
-            line_bot_api.reply_message(event.reply_token, flex_msg)
+            line_bot_api.reply_message(reply_token, flex_msg)
     elif user_text in ["ปิดยอดก่อนกำหนด", "ปิดยอด", "ปิดยอดทั้งหมด"]:
         notify_admin_early_close(user_id, user_text)
-        send_early_close_qr(user_id, event.reply_token)
+        send_early_close_qr(user_id, reply_token)
     else:
-        search_contract_and_reply(user_id, user_text, event.reply_token)
+        search_contract_and_reply(user_id, user_text, reply_token)
+
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    """ จุดรับข้อความตัวอักษรจากลูกค้า (ระบบป้องกันบอท)
+        - ข้อความที่มาจากปุ่มเมนู  -> ทำงานตามคำสั่ง
+        - ข้อความที่ลูกค้าพิมพ์เอง -> บล็อกทิ้ง ไม่ตอบกลับอัตโนมัติ
+    """
+    user_text = event.message.text.strip()
+    user_id = event.source.user_id
+
+    parsed = parse_cmd(user_text)
+    if not parsed:
+        print(
+            f"[ANTI-BOT] บล็อกข้อความที่ไม่ใช่คำสั่งจากเมนู ไม่ตอบกลับอัตโนมัติ "
+            f"| user={user_id} | text={user_text!r}"
+        )
+        if ALLOW_LEGACY_TEXT_COMMANDS:
+            handle_legacy_text_command(user_id, user_text, event.reply_token)
+        return
+
+    action, args = parsed
+    run_command(action, args, user_id, event.reply_token)
+
+
+@handler.add(PostbackEvent)
+def handle_postback_event(event):
+    """ รับคำสั่งจากปุ่มในริชเมนู / ปุ่มใน Flex Message (ประเภท postback) """
+    user_id = event.source.user_id
+    data = getattr(event.postback, 'data', '') or ''
+
+    parsed = parse_cmd(data)
+    if not parsed:
+        print(f"[WARN] postback ที่ไม่ใช่คำสั่งเมนู ถูกข้าม | user={user_id} | data={data!r}")
+        return
+
+    action, args = parsed
+    run_command(action, args, user_id, event.reply_token)
+
+
+@handler.add(FollowEvent)
+def handle_follow_event(event):
+    """ ลูกค้ากดเพิ่มเพื่อนครั้งแรก -> ผูกริชเมนูหลัก + ส่งเมนูต้อนรับ """
+    user_id = getattr(event.source, 'user_id', None)
+
+    if RICH_MENU_ID and user_id:
+        status, body = line_api_request('POST', f'/v2/bot/user/{user_id}/richmenu/{RICH_MENU_ID}')
+        if status != 200:
+            print(f"[WARN] ผูกริชเมนูไม่สำเร็จ | user={user_id} | status={status} | {body}")
+        else:
+            print(f"[OK] ผูกริชเมนู '{RICH_MENU_ID}' ให้ผู้ใช้ใหม่ {user_id}")
+
+    if not user_id:
+        return
+
+    try:
+        flex_msg = build_flex_message_ui("🎛️ ยินดีต้อนรับ", WELCOME_BODY_TEXT, color="#0d6efd")
+        flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
+        line_bot_api.push_message(user_id, flex_msg)
+    except Exception as e:
+        print(f"Error sending welcome message to {user_id}: {e}")
+
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
-    """ ลูกค้าส่งรูปภาพสลิปการโอนเงินเข้ามา -> บันทึกสลิป + แจ้งเตือนหลังบ้าน """
+    """ ลูกค้าส่งรูปภาพเข้ามา -> รับเฉพาะกรณีที่กดปุ่ม 'อัปโหลดสลิป' มาก่อน
+        ถ้าไม่ได้กดปุ่ม ระบบจะไม่บันทึกรูปเป็นสลิป (ป้องกันลูกค้าส่งรูปทั่วไปมาแล้วระบบคิดว่าเป็นสลิป)
+    """
     user_id = event.source.user_id
     message_id = event.message.id
+
+    # ---- ด่านตรวจ: ต้องมีสถานะ "รอส่งสลิป" ที่ยังไม่หมดอายุเท่านั้น ----
+    user_state = get_user_state(user_id)
+    if not user_state or user_state.get('state') != STATE_AWAIT_SLIP:
+        print(f"[SLIP-GUARD] ปฏิเสธรูปที่ไม่ได้กดปุ่มอัปโหลดสลิป | user={user_id} | message_id={message_id}")
+        body_text = (
+            "ขออภัยครับ ตอนนี้ยังไม่ได้เปิดรับรูปสลิปให้คุณ\n\n"
+            "📌 หากคุณโอนเงินเรียบร้อยแล้ว กรุณาทำตามขั้นตอนนี้:\n"
+            "1) กดปุ่ม 'ชำระงวดถัดไป'\n"
+            "2) กดปุ่ม '📤 ส่งสลิปงวดที่ ...' ที่ปรากฏขึ้น\n"
+            "3) ส่งรูปสลิปการโอนเงินเข้ามา 1 รูป\n\n"
+            "⚠️ รูปที่ส่งมาโดยไม่ได้กดปุ่มอัปโหลดสลิป จะไม่ถูกบันทึกเป็นสลิปครับ"
+        )
+        flex_msg = build_flex_message_ui("🚫 ยังไม่ได้กดปุ่มอัปโหลดสลิป", body_text, color="#fd7e14")
+        flex_msg.quick_reply = build_quick_reply([
+            ("ชำระงวดถัดไป", CMD_PAY_NEXT),
+            ("เช็คยอดค่างวด", CMD_STATUS)
+        ])
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
 
     try:
         image_content = line_bot_api.get_message_content(message_id)
@@ -763,18 +975,17 @@ def handle_image_message(event):
             "SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1",
             (user_id,)
         )
-        contract = cursor.fetchone()
+        contract = get_active_contract(cursor, user_id)
 
         if not contract:
+            clear_user_state(user_id)
             body_text = (
                 "ได้รับรูปที่คุณส่งมาแล้วครับ แต่ยังไม่พบสัญญาที่ผูกกับบัญชี LINE นี้\n\n"
-                "💡 กรุณาพิมพ์ 'เบอร์โทรศัพท์', 'เลขบัตรประชาชน' หรือ 'ชื่อ-นามสกุล' "
-                "ที่ใช้ทำสัญญา เพื่อให้เจ้าหน้าที่ตรวจสอบสลิปให้คุณได้อย่างรวดเร็วครับ"
+                "💡 กรุณาแจ้งเบอร์โทรศัพท์ หรือเลขบัตรประชาชนที่ใช้ทำสัญญา "
+                "ให้เจ้าหน้าที่เชื่อมโยงบัญชี LINE ให้ก่อนครับ แล้วค่อยส่งสลิปอีกครั้ง"
             )
             flex_msg = build_flex_message_ui("ℹ️ ยังไม่พบข้อมูลสัญญา", body_text, color="#6c757d")
-            flex_msg.quick_reply = QuickReply(items=[
-                QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด"))
-            ])
+            flex_msg.quick_reply = build_quick_reply([("เช็คยอดค่างวด", CMD_STATUS)])
             line_bot_api.reply_message(event.reply_token, flex_msg)
             return
 
@@ -797,6 +1008,15 @@ def handle_image_message(event):
             (contract['id'],)
         )
         next_payment = cursor.fetchone()
+
+        # ใช้เลขงวดที่ลูกค้ากดปุ่ม "อัปโหลดสลิป" ไว้ (ถ้างวดนั้นยังไม่ชำระ) มิฉะนั้นใช้งวดค้างชำระแรก
+        requested_no = get_state_installment_no(user_state)
+        if requested_no:
+            cursor.execute(
+                "SELECT installment_no, amount FROM payments WHERE contract_id = %s AND installment_no = %s AND status != 'paid'",
+                (contract['id'], requested_no)
+            )
+            next_payment = cursor.fetchone() or next_payment
 
         slip_amount = float(next_payment['amount']) if next_payment and next_payment.get('amount') else None
         installment_no = next_payment['installment_no'] if next_payment else None
@@ -825,10 +1045,14 @@ def handle_image_message(event):
             product_name=contract.get('product_name'),
             color="#198754"
         )
-        flex_reply.quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด"))
+        flex_reply.quick_reply = build_quick_reply([
+            ("เช็คยอดค่างวด", CMD_STATUS),
+            ("ชำระงวดถัดไป", CMD_PAY_NEXT)
         ])
         line_bot_api.reply_message(event.reply_token, flex_reply)
+
+        # รับรูปไปแล้ว -> ปิดสถานะรอส่งสลิป (รูปถัดไปต้องกดปุ่มอัปโหลดสลิปใหม่ทุกครั้ง)
+        clear_user_state(user_id)
 
         # แจ้งเตือนผู้ดูแลระบบทาง LINE (ใช้รูปแบบเดียวกับการแจ้งเตือนปิดยอดก่อนกำหนด)
         print(
@@ -938,6 +1162,215 @@ def notify_admin_early_close(user_id, trigger_text):
         cursor.close()
         conn.close()
 
+def build_upload_slip_prompt_flex(installment_no, amount=None):
+    """ กล่องข้อความ + ปุ่ม "อัปโหลดสลิป" ที่แนบต่อท้าย QR Code """
+    amount_text = f"{amount:,.2f} บาท" if amount else "-"
+    contents = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#198754",
+            "paddingAll": "lg",
+            "contents": [
+                {"type": "text", "text": "📸 ส่งสลิปการโอนเงิน", "weight": "bold", "color": "#ffffff", "size": "lg", "wrap": True},
+                {"type": "text", "text": f"งวดที่ {installment_no} • {amount_text}", "color": "#e0e0e0", "size": "sm", "margin": "sm", "wrap": True}
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "md",
+            "paddingAll": "lg",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#f8f9fa",
+                    "cornerRadius": "md",
+                    "paddingAll": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "เมื่อโอนเงินเรียบร้อยแล้ว กรุณากดปุ่มสีเขียวด้านล่างเพื่อเปิดการรับรูปสลิป\n\n"
+                                "วิธีส่งสลิป:\n"
+                                "1) กดปุ่ม 'ส่งสลิปงวดที่ ...' ด้านล่าง\n"
+                                "2) เลือกรูปสลิปจากแกลเลอรี หรือถ่ายรูปใหม่\n"
+                                "3) ส่งรูปเข้ามา 1 รูป\n\n"
+                                "ระบบจะรับรูปได้เฉพาะเมื่อกดปุ่มนี้ก่อนเท่านั้น รูปที่ส่งมาเองจะไม่ถูกบันทึกเป็นสลิปครับ"
+                            ),
+                            "size": "sm",
+                            "color": "#212529",
+                            "wrap": True
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "paddingAll": "md",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#198754",
+                    "height": "md",
+                    "action": {
+                        "type": "postback",
+                        "label": f"📤 ส่งสลิปงวดที่ {installment_no}",
+                        "data": build_cmd(CMD_UPLOAD_SLIP, installment_no)
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "color": "#6c757d",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "ยกเลิกการส่งสลิป",
+                        "data": build_cmd(CMD_CANCEL)
+                    }
+                }
+            ]
+        }
+    }
+    return FlexSendMessage(alt_text="ส่งสลิปการโอนเงิน", contents=contents)
+
+
+def send_main_menu(user_id, reply_token):
+    """ ส่งเมนูหลักพร้อมปุ่มกดให้ลูกค้า """
+    flex_msg = build_flex_message_ui("🎛️ เมนูหลัก", MENU_BODY_TEXT, color="#0d6efd")
+    flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
+    line_bot_api.reply_message(reply_token, flex_msg)
+
+
+def handle_upload_slip_request(user_id, reply_token, args=None):
+    """ ลูกค้ากดปุ่ม "อัปโหลดสลิป" -> เปิดสถานะรอรับรูปสลิป
+        (ระบบจะรับรูปก็ต่อเมื่อผ่านฟังก์ชันนี้เท่านั้น)
+    """
+    args = args or []
+
+    try:
+        conn = get_db()
+    except Exception as err:
+        print(f"DB Error on handle_upload_slip_request: {err}")
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล", color="#dc3545")
+        line_bot_api.reply_message(reply_token, flex_msg)
+        return
+
+    cursor = conn.cursor()
+    try:
+        contract = get_active_contract(cursor, user_id)
+
+        if not contract:
+            body_text = (
+                "ยังไม่พบสัญญาที่ผูกกับบัญชี LINE นี้ครับ\n\n"
+                "💡 กรุณาแจ้งเบอร์โทรศัพท์ หรือเลขบัตรประชาชนที่ใช้ทำสัญญา "
+                "ให้เจ้าหน้าที่เชื่อมโยงบัญชี LINE ให้ก่อนครับ แล้วค่อยส่งสลิป"
+            )
+            flex_msg = build_flex_message_ui("ℹ️ ยังไม่พบสัญญา", body_text, color="#6c757d")
+            flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
+            line_bot_api.reply_message(reply_token, flex_msg)
+            return
+
+        cursor.execute(
+            "SELECT installment_no, status FROM payments WHERE contract_id = %s ORDER BY installment_no ASC",
+            (contract['id'],)
+        )
+        payments = cursor.fetchall()
+        unpaid_list = [p for p in payments if p['status'] != 'paid']
+
+        # งวดที่มาจากปุ่ม (ถ้ายังไม่ชำระ) ถ้าไม่ระบุหรือชำระไปแล้ว ใช้งวดค้างชำระแรก
+        target_no = None
+        if args:
+            try:
+                requested_no = int(str(args[0]).strip())
+            except (TypeError, ValueError):
+                requested_no = None
+
+            if requested_no and any(p['installment_no'] == requested_no for p in unpaid_list):
+                target_no = requested_no
+
+        if target_no is None and unpaid_list:
+            target_no = unpaid_list[0]['installment_no']
+
+        if target_no is None:
+            body_text = "สัญญาของคุณชำระครบทุกงวดแล้วครับ ไม่จำเป็นต้องส่งสลิปเพิ่มเติม 🙏"
+            flex_msg = build_flex_message_ui(
+                "✅ ปิดยอดเรียบร้อย",
+                body_text,
+                contract_number=contract.get('contract_number'),
+                product_name=contract.get('product_name'),
+                color="#198754"
+            )
+            flex_msg.quick_reply = build_quick_reply([("เช็คยอดค่างวด", CMD_STATUS)])
+            line_bot_api.reply_message(reply_token, flex_msg)
+            return
+
+        payload = json.dumps(
+            {'installment_no': target_no, 'contract_id': contract['id']},
+            ensure_ascii=False
+        )
+        if not set_user_state(user_id, STATE_AWAIT_SLIP, payload=payload):
+            flex_msg = build_flex_message_ui(
+                "⚠️ ข้อผิดพลาด",
+                "ระบบไม่สามารถเปิดรับสลิปได้ กรุณาลองใหม่อีกครั้ง",
+                color="#dc3545"
+            )
+            flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
+            line_bot_api.reply_message(reply_token, flex_msg)
+            return
+
+        body_text = (
+            "กรุณากดปุ่มเลือกรูปจากมือถือ (แกลเลอรีหรือกล้อง) แล้วส่งรูปสลิปการโอนเงินเข้ามา 1 รูปครับ\n\n"
+            f"🔢 งวดที่: งวดที่ {target_no}\n"
+            f"⏳ ระบบเปิดรับสลิปไว้ {SLIP_STATE_TTL_MINUTES} นาที และจะปิดอัตโนมัติเมื่อได้รับรูปแล้ว\n\n"
+            "📌 รูปสลิปควรชัดเจน เห็นวันที่ ยอดเงิน และหมายเลขบัญชีผู้รับเงิน\n"
+            "⚠️ ระบบจะรับรูปได้เพียง 1 รูปต่อครั้ง รูปถัดไปต้องกดปุ่มอัปโหลดสลิปใหม่ทุกครั้ง"
+        )
+        flex_msg = build_flex_message_ui(
+            "📸 พร้อมรับสลิปแล้ว",
+            body_text,
+            contract_number=contract.get('contract_number'),
+            product_name=contract.get('product_name'),
+            color="#198754"
+        )
+        flex_msg.quick_reply = build_quick_reply([
+            ("ยกเลิกการส่งสลิป", CMD_CANCEL),
+            ("เช็คยอดค่างวด", CMD_STATUS)
+        ])
+        line_bot_api.reply_message(reply_token, flex_msg)
+
+    except Exception as e:
+        print(f"Error in handle_upload_slip_request: {e}")
+        try:
+            flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง", color="#dc3545")
+            line_bot_api.reply_message(reply_token, flex_msg)
+        except Exception:
+            pass
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def handle_cancel_pending(user_id, reply_token):
+    """ ลูกค้ากดยกเลิก -> ปิดสถานะรอส่งสลิป """
+    clear_user_state(user_id)
+    body_text = (
+        "ยกเลิกการส่งสลิปเรียบร้อยแล้วครับ\n\n"
+        "หากต้องการส่งสลิปภายหลัง กดปุ่ม 'ชำระงวดถัดไป' แล้วกดปุ่ม 'ส่งสลิปงวดที่ ...' อีกครั้งได้เลยครับ"
+    )
+    flex_msg = build_flex_message_ui("🚫 ยกเลิกแล้ว", body_text, color="#6c757d")
+    flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
+    line_bot_api.reply_message(reply_token, flex_msg)
+
+
 def search_contract_and_reply(user_id, search_term, reply_token):
     try:
         conn = get_db()
@@ -968,11 +1401,15 @@ def search_contract_and_reply(user_id, search_term, reply_token):
 
             render_flex_contract(contract, reply_token, show_buttons=True)
         else:
-            body_text = "ไม่พบข้อมูลสัญญาจากคำค้นหาของคุณ กรุณาพิมพ์ เบอร์โทรศัพท์, เลขบัตรประชาชน หรือ ชื่อ-นามสกุล ที่ใช้ลงทะเบียนสัญญาให้ถูกต้องครับ"
+            body_text = (
+                "ไม่พบข้อมูลสัญญาจากคำค้นหาของคุณครับ\n\n"
+                "💡 กรุณาแจ้งเบอร์โทรศัพท์ หรือเลขบัตรประชาชนที่ใช้ทำสัญญาให้เจ้าหน้าที่ทางโทรศัพท์ "
+                "เพื่อให้เชื่อมโยงบัญชี LINE ให้คุณอย่างรวดเร็วครับ"
+            )
             flex_msg = build_flex_message_ui("🔍 ค้นหาสัญญา", body_text, color="#6c757d")
-            flex_msg.quick_reply = QuickReply(items=[
-                QuickReplyButton(action=MessageAction(label="เช็คยอดค่างวด", text="เช็คยอด")),
-                QuickReplyButton(action=MessageAction(label="ปิดยอดก่อนกำหนด", text="ปิดยอดก่อนกำหนด"))
+            flex_msg.quick_reply = build_quick_reply([
+                ("เช็คยอดค่างวด", CMD_STATUS),
+                ("ปิดยอดก่อนกำหนด", CMD_EARLY_CLOSE)
             ])
             line_bot_api.reply_message(reply_token, flex_msg)
     finally:
@@ -991,8 +1428,13 @@ def send_contract_status(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            body_text = "ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้\n\n💡 ท่านสามารถพิมพ์ 'เบอร์โทรศัพท์', 'เลขบัตรประชาชน' หรือ 'ชื่อ-นามสกุล' เพื่อค้นหาสัญญาของคุณได้เลยครับ"
+            body_text = (
+                "ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้ครับ\n\n"
+                "💡 กรุณาแจ้งเบอร์โทรศัพท์ หรือเลขบัตรประชาชนที่ใช้ทำสัญญาให้เจ้าหน้าที่ทางโทรศัพท์ "
+                "เพื่อให้เชื่อมโยงบัญชี LINE นี้เข้ากับสัญญาของคุณครับ"
+            )
             flex_msg = build_flex_message_ui("ℹ️ ไม่พบสัญญา", body_text, color="#6c757d")
+            flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
             line_bot_api.reply_message(reply_token, flex_msg)
             return
 
@@ -1013,8 +1455,12 @@ def send_contract_only(user_id, reply_token):
         contract = cursor.fetchone()
 
         if not contract:
-            body_text = "ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้"
+            body_text = (
+                "ไม่พบข้อมูลสัญญาผ่อนชำระที่ผูกกับ LINE นี้ครับ\n\n"
+                "💡 กรุณาแจ้งเบอร์โทรศัพท์ หรือเลขบัตรประชาชนที่ใช้ทำสัญญาให้เจ้าหน้าที่ทางโทรศัพท์ครับ"
+            )
             flex_msg = build_flex_message_ui("ℹ️ ไม่พบสัญญา", body_text, color="#6c757d")
+            flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
             line_bot_api.reply_message(reply_token, flex_msg)
             return
 
@@ -1086,9 +1532,9 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                     "style": "primary",
                     "color": "#0d6efd",
                     "action": {
-                        "type": "message",
+                        "type": "postback",
                         "label": f"ชำระงวดที่ {next_inst_no} ({pay_amount:,.2f} บาท)",
-                        "text": f"ชำระงวดที่ {next_inst_no}"
+                        "data": build_cmd(CMD_PAY, next_inst_no)
                     }
                 })
                 footer_contents.append({
@@ -1096,9 +1542,9 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
                     "style": "secondary",
                     "color": "#6c757d",
                     "action": {
-                        "type": "message",
+                        "type": "postback",
                         "label": "ปิดยอดก่อนกำหนด (ส่วนลด 15%)",
-                        "text": "ปิดยอดก่อนกำหนด"
+                        "data": build_cmd(CMD_EARLY_CLOSE)
                     }
                 })
             else:
@@ -1289,7 +1735,19 @@ def render_flex_contract(contract, reply_token, show_buttons=True):
             }
         }
 
-        line_bot_api.reply_message(reply_token, FlexSendMessage(alt_text="ข้อมูลสัญญา", contents=flex_contents))
+        contract_flex_msg = FlexSendMessage(alt_text="ข้อมูลสัญญา", contents=flex_contents)
+
+        # แนบปุ่มเมนูด้านล่าง เพื่อให้ลูกค้าเลือกทำรายการต่อได้ทันทีโดยไม่ต้องพิมพ์
+        if is_cancelled or is_reclaim or is_closed:
+            contract_flex_msg.quick_reply = build_quick_reply([("เมนูหลัก", CMD_MENU)])
+        else:
+            contract_flex_msg.quick_reply = build_quick_reply([
+                (f"📤 ส่งสลิปงวดที่ {next_inst_no}", CMD_UPLOAD_SLIP, next_inst_no),
+                ("ชำระงวดถัดไป", CMD_PAY_NEXT),
+                ("ปิดยอดก่อนกำหนด", CMD_EARLY_CLOSE)
+            ])
+
+        line_bot_api.reply_message(reply_token, contract_flex_msg)
     finally:
         cursor.close()
         conn.close()
@@ -1304,11 +1762,11 @@ def send_payment_qr(user_id, installment_no, reply_token):
 
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1", (user_id,))
-        contract = cursor.fetchone()
+        contract = get_active_contract(cursor, user_id)
 
         if not contract:
             flex_msg = build_flex_message_ui("ℹ️ ไม่พบสัญญา", "ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่", color="#6c757d")
+            flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
             line_bot_api.reply_message(reply_token, flex_msg)
             return
 
@@ -1335,17 +1793,72 @@ def send_payment_qr(user_id, installment_no, reply_token):
         )
         flex_msg = build_flex_message_ui("📱 QR Code สำหรับชำระเงินค่างวด", msg_text, contract_number=contract.get('contract_number'), product_name=contract.get('product_name'), color="#0d6efd")
 
-        line_bot_api.reply_message(
-            reply_token,
-            [
-                flex_msg,
-                ImageSendMessage(original_content_url=qr_url, preview_image_url=qr_url)
-            ]
-        )
+        # ปุ่มเมนูใต้ QR: เปิดชำระเงิน / เช็คยอด (ใช้ postback ไม่ต้องพิมพ์ข้อความ)
+        qr_quick_reply = build_quick_reply([
+            (f"ชำระงวดที่ {installment_no}", CMD_PAY, installment_no),
+            ("เช็คยอดค่างวด", CMD_STATUS)
+        ])
+        flex_msg.quick_reply = qr_quick_reply
+
+        image_msg = ImageSendMessage(original_content_url=qr_url, preview_image_url=qr_url)
+        image_msg.quick_reply = qr_quick_reply
+
+        # ข้อความ + ปุ่ม "อัปโหลดสลิป" แนบต่อท้าย QR Code
+        slip_prompt_msg = build_upload_slip_prompt_flex(installment_no, amount)
+
+        line_bot_api.reply_message(reply_token, [flex_msg, image_msg, slip_prompt_msg])
     except Exception as err:
         print(f"Error in send_payment_qr: {err}")
         flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการสร้าง QR Code ชำระเงิน", color="#dc3545")
         line_bot_api.reply_message(reply_token, flex_msg)
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def send_payment_qr_next(user_id, reply_token):
+    """ ชำระงวดถัดไป (งวดค้างชำระล่าสุด) - ใช้กรณีกดจากริชเมนูที่ไม่ทราบเลขงวด """
+    try:
+        conn = get_db()
+    except Exception as err:
+        print(f"DB Error on send_payment_qr_next: {err}")
+        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล", color="#dc3545")
+        line_bot_api.reply_message(reply_token, flex_msg)
+        return
+
+    cursor = conn.cursor()
+    try:
+        contract = get_active_contract(cursor, user_id)
+
+        if not contract:
+            flex_msg = build_flex_message_ui(
+                "ℹ️ ไม่พบสัญญา",
+                "ไม่พบสัญญาผ่อนชำระที่กำลังใช้งานอยู่ครับ\n\n💡 กรุณาแจ้งเบอร์โทรศัพท์ หรือเลขบัตรประชาชนที่ใช้ทำสัญญา ให้เจ้าหน้าที่เชื่อมโยงบัญชี LINE ให้ก่อนครับ",
+                color="#6c757d"
+            )
+            flex_msg.quick_reply = build_quick_reply(MAIN_MENU_BUTTONS)
+            line_bot_api.reply_message(reply_token, flex_msg)
+            return
+
+        cursor.execute(
+            "SELECT installment_no FROM payments WHERE contract_id = %s AND status != 'paid' ORDER BY installment_no ASC LIMIT 1",
+            (contract['id'],)
+        )
+        next_row = cursor.fetchone()
+
+        if not next_row:
+            flex_msg = build_flex_message_ui(
+                "✅ ปิดยอดเรียบร้อย",
+                "สัญญาของคุณชำระครบทุกงวดแล้วครับ ขอบคุณที่ใช้บริการ 🙏",
+                contract_number=contract.get('contract_number'),
+                product_name=contract.get('product_name'),
+                color="#198754"
+            )
+            flex_msg.quick_reply = build_quick_reply([("ข้อมูลสัญญา", CMD_CONTRACT)])
+            line_bot_api.reply_message(reply_token, flex_msg)
+            return
+
+        send_payment_qr(user_id, next_row['installment_no'], reply_token)
     finally:
         cursor.close()
         conn.close()
@@ -1404,6 +1917,65 @@ def send_early_close_qr(user_id, reply_token):
     finally:
         cursor.close()
         conn.close()
+
+# ============================================================================
+# API จัดการริชเมนู (เรียก LINE Messaging REST API โดยตรง ไม่พึ่งคลาสของ SDK)
+# ============================================================================
+@app.route('/api/richmenu', methods=['POST'])
+def api_create_rich_menu():
+    """ สร้างริชเมนูหลัก (ปุ่มทั้งหมดเป็น postback -> บอทตอบเฉพาะตอนกดปุ่ม) """
+    status, body = line_api_request('POST', '/v2/bot/richmenu', build_rich_menu_payload())
+
+    if status != 200:
+        print(f"[ERROR] สร้างริชเมนูไม่สำเร็จ status={status} body={body}")
+        return jsonify({'success': False, 'status': status, 'detail': body}), 500
+
+    rich_menu_id = (body or {}).get('richMenuId')
+    print(f"[OK] สร้างริชเมนูสำเร็จ: {rich_menu_id}")
+    print("     นำค่านี้ไปใส่ใน Environment Variable ชื่อ LINE_RICHMENU_ID เพื่อผูกให้ผู้ใช้ใหม่อัตโนมัติ")
+    return jsonify({'success': True, 'rich_menu_id': rich_menu_id})
+
+
+@app.route('/api/richmenu', methods=['GET'])
+def api_list_rich_menu():
+    """ ดูรายการริชเมนูทั้งหมด """
+    status, body = line_api_request('GET', '/v2/bot/richmenu/list')
+    if status != 200:
+        return jsonify({'success': False, 'status': status, 'detail': body}), 500
+    return jsonify({'success': True, 'rich_menus': (body or {}).get('richmenus', [])})
+
+
+@app.route('/api/richmenu/<path:rich_menu_id>', methods=['DELETE'])
+def api_delete_rich_menu(rich_menu_id):
+    """ ลบริชเมนูตามรหัส """
+    status, body = line_api_request('DELETE', f'/v2/bot/richmenu/{rich_menu_id}')
+    if status != 200:
+        return jsonify({'success': False, 'status': status, 'detail': body}), 500
+    return jsonify({'success': True, 'deleted': rich_menu_id})
+
+
+@app.route('/api/richmenu/<path:rich_menu_id>/default', methods=['POST'])
+def api_set_default_rich_menu(rich_menu_id):
+    """ ตั้งริชเมนูหลักให้กับผู้ใช้ทุกคน (ผู้ที่ยังไม่เคยผูกริชเมนูอื่น) """
+    status, body = line_api_request('POST', f'/v2/bot/user/all/richmenu/{rich_menu_id}')
+    if status not in (200, 201):
+        return jsonify({'success': False, 'status': status, 'detail': body}), 500
+    return jsonify({'success': True, 'default_rich_menu_id': rich_menu_id})
+
+
+@app.route('/api/richmenu/link/<path:rich_menu_id>', methods=['POST'])
+def api_link_rich_menu_to_user(rich_menu_id):
+    """ ผูกริชเมนูให้ผู้ใช้รายคน body: {"line_user_id": "Uxxxx"} """
+    data = request.get_json(silent=True) or {}
+    line_user_id = data.get('line_user_id')
+    if not line_user_id:
+        return jsonify({'success': False, 'error': 'กรุณาระบุ line_user_id'}), 400
+
+    status, body = line_api_request('POST', f'/v2/bot/user/{line_user_id}/richmenu/{rich_menu_id}')
+    if status != 200:
+        return jsonify({'success': False, 'status': status, 'detail': body}), 500
+    return jsonify({'success': True, 'linked': line_user_id, 'rich_menu_id': rich_menu_id})
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
