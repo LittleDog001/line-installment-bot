@@ -28,34 +28,27 @@ typed = ["เช็คค่างวด", "เมนู", "ชำระงว�
 for t in typed:
     check(f"บล็อกข้อความพิมพ์เอง: {t!r}", app.parse_cmd(t) is None)
 check("อนุญาตข้อความเช็คยอด", app.TEXT_COMMANDS.get("เช็คยอด") == app.CMD_STATUS)
+check("อนุญาตคำสั่งเช็คยอดจาก rich menu OA", app.TEXT_COMMANDS.get("เช็คยอดค่างวด") == app.CMD_STATUS)
 check("อนุญาตข้อความสัญญา", app.TEXT_COMMANDS.get("สัญญา") == app.CMD_CONTRACT)
+check("อนุญาตคำสั่งข้อมูลสัญญาจาก rich menu OA", app.TEXT_COMMANDS.get("ข้อมูลสัญญา") == app.CMD_CONTRACT)
 check("อนุญาตข้อความชำระค่างวด", app.TEXT_COMMANDS.get("ชำระค่างวด") == app.CMD_PAY_NEXT)
 
-print("\n=== 3. คำสั่งจากปุ่มเมนู ต้องถูกมองเป็นคำสั่ง ===")
-for a in [app.CMD_STATUS, app.CMD_CONTRACT, app.CMD_PAY_NEXT, app.CMD_EARLY_CLOSE, app.CMD_CANCEL, app.CMD_MENU]:
+print("\n=== 3. คำสั่งจาก postback ของปุ่มขั้นตอน ===")
+for a in [app.CMD_STATUS, app.CMD_CONTRACT, app.CMD_PAY_NEXT, app.CMD_EARLY_CLOSE,
+          app.CMD_CANCEL, app.CMD_CONFIRM_SLIP]:
     check(f"รับรู้คำสั่ง {a}", app.parse_cmd(app.build_cmd(a)) is not None)
 
-print("\n=== 4. build_quick_reply ใช้ PostbackAction ทั้งหมด ===")
-qr = app.build_quick_reply([("เช็คยอดค่างวด", app.CMD_STATUS), ("ชำระงวดถัดไป", app.CMD_PAY_NEXT)])
-check("สร้าง QuickReply ได้", qr is not None and len(qr.items) == 2)
-for b in qr.items:
-    check("เป็น PostbackAction", type(b.action).__name__ == "PostbackAction", type(b.action).__name__)
-    check("data ขึ้นต้นด้วย prefix", b.action.data.startswith(app.CMD_PREFIX), b.action.data)
-    check("label <= 20 ตัว", len(b.action.label) <= 20, f"{len(b.action.label)}:{b.action.label}")
-
-qr2 = app.build_quick_reply([(f"📤 ส่งสลิปงวดที่ {i}", app.CMD_UPLOAD_SLIP, i) for i in (3, 12, 120)])
-for b in qr2.items:
-    check(f"label สลิปงวดที่ {b.action.data.split('|')[-1]} <= 20 ตัว", len(b.action.label) <= 20, f"{len(b.action.label)}:{b.action.label}")
-check("build_quick_reply(None) -> None", app.build_quick_reply(None) is None)
-check("build_quick_reply([]) -> None", app.build_quick_reply([]) is None)
-
-print("\n=== 5. ลบระบบริชเมนู ===")
+print("\n=== 4. ไม่มี Quick Reply จำลอง ===")
 source = open("app.py", encoding="utf-8").read()
-check("ไม่มีฟังก์ชัน Rich Menu", not hasattr(app, "build_rich_menu_payload"))
-check("ไม่มี endpoint Rich Menu", not any("/api/richmenu" in str(rule) for rule in app.app.url_map.iter_rules()))
-check("ไม่มีการผูก Rich Menu ตอน follow", "RICH_MENU_ID" not in source and "richmenu" not in source.lower())
+check("ไม่มีการสร้าง Quick Reply", not hasattr(app, "build_quick_reply") and ".quick_reply" not in source)
+check("คำสั่งพิมพ์ที่อนุญาตระบุชัดเจน", set(app.TEXT_COMMANDS) == {
+    "เช็คยอด", "เช็คยอดค่างวด", "สัญญา", "ข้อมูลสัญญา",
+    "ชำระค่างวด", "ชำระงวดถัดไป", "ปิดยอดก่อนกำหนด",
+    "ส่งสลิป", "ยืนยันสลิป", "ยืนยันว่าเป็นสลิป",
+    "ยกเลิกส่งสลิป", "ยกเลิกการส่งสลิป"
+})
 
-print("\n=== 6. flex ปุ่มอัปโหลดสลิป ===")
+print("\n=== 5. Flex actions สำหรับส่งและยืนยันสลิป ===")
 flex = app.build_upload_slip_prompt_flex(3, 2500.0)
 flex_json = flex.contents.as_json_dict()
 btns = flex_json["footer"]["contents"]
@@ -68,25 +61,100 @@ close_flex = app.build_upload_slip_prompt_flex(None, 10000.0, is_early_close=Tru
 close_button = close_flex.contents.as_json_dict()["footer"]["contents"][0]
 check("ปุ่มสลิปปิดยอดถูกแสดง", close_button["action"]["label"] == "📤 ส่งสลิปปิดยอด")
 check("ปุ่มสลิปปิดยอดส่งคำสั่งเฉพาะ", app.parse_cmd(close_button["action"]["data"]) == ("upload_slip", ["early_close"]))
+confirm_flex = app.build_slip_confirmation_flex().contents.as_json_dict()
+confirm_buttons = confirm_flex["footer"]["contents"]
+check("ยืนยันสลิปต้องกดปุ่มยืนยันชัดเจน",
+      app.parse_cmd(confirm_buttons[0]["action"]["data"]) == ("confirm_slip", []))
+check("ยกเลิกรูปที่รอยืนยันได้",
+      app.parse_cmd(confirm_buttons[1]["action"]["data"]) == ("cancel", []))
 
-print("\n=== 7. ตัวแปรค่าตั้ง ===")
+print("\n=== 6. ตัวแปรค่าตั้ง ===")
 check("STATE_AWAIT_SLIP", app.STATE_AWAIT_SLIP == "await_slip")
+check("STATE_CONFIRM_SLIP", app.STATE_CONFIRM_SLIP == "confirm_slip")
 check("TTL = 30 นาที", app.SLIP_STATE_TTL_MINUTES == 30, str(app.SLIP_STATE_TTL_MINUTES))
 check("ไม่มีโหมดรับข้อความพิมพ์เอง", not hasattr(app, "ALLOW_LEGACY_TEXT_COMMANDS"))
-check("เมนูหลักมี 4 ปุ่ม", len(app.MAIN_MENU_BUTTONS) == 4)
 check(
     "อ่านสถานะ upload ปิดยอด",
     app.get_state_payload({"payload": '{"payment_type":"early_close","amount":123.45}'})
     == {"payment_type": "early_close", "amount": 123.45}
 )
 
-print("\n=== 8. ฟังก์ชันสำคัญถูกต้องครบ ===")
+print("\n=== 7. ฟังก์ชันสำคัญถูกต้องครบ ===")
 required = ["set_user_state", "get_user_state", "clear_user_state", "get_active_contract",
-            "get_state_installment_no", "run_command", "send_main_menu",
-            "handle_upload_slip_request", "handle_cancel_pending", "send_payment_qr_next",
+            "get_state_installment_no", "run_command",
+            "handle_upload_slip_request", "handle_cancel_pending", "handle_confirm_slip_request",
+            "process_confirmed_slip_image", "send_payment_qr_next",
             "handle_postback_event", "handle_follow_event", "build_cmd", "parse_cmd"]
 for fn in required:
     check(f"มีฟังก์ชัน {fn}", callable(getattr(app, fn, None)))
+
+print("\n=== 8. รูปภาพต้องอยู่ในขั้นตอนและยืนยันก่อนบันทึก ===")
+original_get_user_state = app.get_user_state
+original_set_user_state = app.set_user_state
+original_reply_message = app.line_bot_api.reply_message
+original_get_message_content = app.line_bot_api.get_message_content
+saved_state = {}
+replies = []
+download_attempts = []
+app.get_user_state = lambda user_id: {"state": app.STATE_AWAIT_SLIP, "payload": '{"installment_no":2,"contract_id":7}'}
+def capture_state(user_id, state, payload=None, ttl_minutes=None):
+    saved_state.update({"state": state, "payload": payload, "ttl_minutes": ttl_minutes})
+    return True
+app.set_user_state = capture_state
+app.line_bot_api.reply_message = lambda reply_token, message: replies.append((reply_token, message))
+app.line_bot_api.get_message_content = lambda message_id: download_attempts.append(message_id)
+image_event = SimpleNamespace(
+    source=SimpleNamespace(user_id="U-test"),
+    message=SimpleNamespace(id="image-test"),
+    reply_token="image-reply"
+)
+app.handle_image_message(image_event)
+check("เมื่อได้รับรูปให้บันทึกสถานะรอยืนยันเท่านั้น", saved_state.get("state") == app.STATE_CONFIRM_SLIP)
+check("ผูก message ID รูปไว้กับสถานะยืนยัน",
+      app.get_state_payload({"payload": saved_state.get("payload")}).get("image_message_id") == "image-test")
+check("รูปยังไม่ถูกดาวน์โหลด/บันทึกก่อนยืนยัน", not download_attempts)
+check("ส่ง Flex ให้ลูกค้ายืนยันรูป", len(replies) == 1 and type(replies[0][1]).__name__ == "FlexSendMessage")
+
+saved_state.clear()
+replies.clear()
+app.get_user_state = lambda user_id: None
+app.handle_image_message(image_event)
+check("รูปที่ไม่มีคำสั่งเริ่มส่งสลิปไม่เปลี่ยนสถานะ", not saved_state)
+check("รูปที่ไม่มีคำสั่งไม่ถูกดาวน์โหลด", not download_attempts)
+check("แจ้งลูกค้าว่ารูปยังไม่ถูกบันทึก", len(replies) == 1)
+
+saved_state.clear()
+replies.clear()
+app.get_user_state = lambda user_id: {
+    "state": app.STATE_CONFIRM_SLIP,
+    "payload": '{"installment_no":2,"contract_id":7,"image_message_id":"first-image"}'
+}
+app.handle_image_message(image_event)
+check("รูปใหม่ไม่แทนที่รูปที่กำลังรอยืนยัน", not saved_state and not download_attempts)
+check("แจ้งให้ยืนยันหรือยกเลิกรูปเดิมก่อน", len(replies) == 1)
+
+saved_state.clear()
+replies.clear()
+app.get_user_state = lambda user_id: {
+    "state": app.STATE_CONFIRM_SLIP,
+    "payload": '{"installment_no":2,"contract_id":7,"image_message_id":"confirmed-image"}'
+}
+processed_images = []
+original_process_confirmed_slip_image = app.process_confirmed_slip_image
+app.process_confirmed_slip_image = lambda event, state: processed_images.append((event, state))
+app.handle_confirm_slip_request("U-test", "confirm-reply")
+check("ปุ่มยืนยันเปลี่ยนสถานะกลับสู่การบันทึกสลิป",
+      saved_state.get("state") == app.STATE_AWAIT_SLIP)
+check("ประมวลผลเฉพาะ message ID ที่รอยืนยัน",
+      len(processed_images) == 1 and processed_images[0][0].message.id == "confirmed-image")
+check("ข้อมูลยืนยันไม่ปน message ID เข้ากับข้อมูลค่างวด",
+      app.get_state_payload(processed_images[0][1]).get("image_message_id") is None)
+app.process_confirmed_slip_image = original_process_confirmed_slip_image
+
+app.get_user_state = original_get_user_state
+app.set_user_state = original_set_user_state
+app.line_bot_api.reply_message = original_reply_message
+app.line_bot_api.get_message_content = original_get_message_content
 
 print("\n=== 9. ข้อความที่กำหนดเท่านั้นจึงเรียกคำสั่ง ===")
 original_run_command = app.run_command
@@ -94,8 +162,17 @@ received_commands = []
 app.run_command = lambda *args: received_commands.append(args)
 for text, expected_action in [
     ("เช็คยอด", app.CMD_STATUS),
+    ("เช็คยอดค่างวด", app.CMD_STATUS),
     ("สัญญา", app.CMD_CONTRACT),
+    ("ข้อมูลสัญญา", app.CMD_CONTRACT),
     ("ชำระค่างวด", app.CMD_PAY_NEXT),
+    ("ชำระงวดถัดไป", app.CMD_PAY_NEXT),
+    ("ปิดยอดก่อนกำหนด", app.CMD_EARLY_CLOSE),
+    ("ส่งสลิป", app.CMD_UPLOAD_SLIP),
+    ("ยืนยันสลิป", app.CMD_CONFIRM_SLIP),
+    ("ยืนยันว่าเป็นสลิป", app.CMD_CONFIRM_SLIP),
+    ("ยกเลิกส่งสลิป", app.CMD_CANCEL),
+    ("ยกเลิกการส่งสลิป", app.CMD_CANCEL),
 ]:
     event = SimpleNamespace(
         message=SimpleNamespace(text=text),
@@ -110,7 +187,7 @@ for text, expected_action in [
     )
 
 received_commands.clear()
-for text in ["สวัสดี", "เช็คยอดค่างวด", "#BOTMENU#status", "ชำระงวด"]:
+for text in ["สวัสดี", "#BOTMENU#status", "ชำระงวด", "ปิดยอด", "ส่งสลิปด่วน"]:
     event = SimpleNamespace(
         message=SimpleNamespace(text=text),
         source=SimpleNamespace(user_id="U-test"),
