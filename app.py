@@ -255,6 +255,42 @@ def set_user_state(user_id, state, payload=None, ttl_minutes=None):
         conn.close()
 
 
+def transition_user_state(user_id, expected_state, next_state, payload=None, ttl_minutes=None):
+    """ เปลี่ยนสถานะเฉพาะเมื่อยังอยู่สถานะเดิม ป้องกัน postback ซ้ำทำงานซ้อนกัน """
+    if not user_id or not expected_state or not next_state:
+        return False
+
+    ttl = SLIP_STATE_TTL_MINUTES if ttl_minutes is None else ttl_minutes
+    try:
+        conn = get_db()
+    except Exception as e:
+        print(f"DB Error on transition_user_state: {e}")
+        return False
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE line_user_states
+            SET state = %s,
+                payload = %s,
+                expires_at = NOW() + (%s * INTERVAL '1 minute'),
+                updated_at = NOW()
+            WHERE line_user_id = %s
+              AND state = %s
+              AND (expires_at IS NULL OR expires_at > NOW())
+        """, (next_state, payload, int(ttl), user_id, expected_state))
+        transitioned = cursor.rowcount == 1
+        conn.commit()
+        return transitioned
+    except Exception as e:
+        conn.rollback()
+        print(f"Error transitioning user state: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def get_user_state(user_id):
     """ คืนสถานะค้างของลูกค้าเป็น dict ({'state':..., 'payload':...}) หรือ None ถ้าไม่มี/หมดอายุ """
     if not user_id:
@@ -776,8 +812,9 @@ def run_command(action, args, user_id, reply_token):
                 color="#dc3545"
             )
             line_bot_api.reply_message(reply_token, flex_msg)
-        except Exception:
-            pass
+        except Exception as reply_error:
+            print(f"Error sending command failure reply to {user_id}: {reply_error}")
+            raise
 
 
 @handler.add(MessageEvent, message=TextMessage)
@@ -830,23 +867,14 @@ def handle_image_message(event):
     message_id = event.message.id
     user_state = get_user_state(user_id)
     if not user_state or user_state.get('state') != STATE_AWAIT_SLIP:
-        print(f"[SLIP-GUARD] ปฏิเสธรูปที่ไม่ได้กดปุ่มอัปโหลดสลิป | user={user_id} | message_id={message_id}")
-        if user_state and user_state.get('state') == STATE_CONFIRM_SLIP:
-            body_text = "มีรูปที่รอยืนยันอยู่แล้วครับ กรุณายืนยันหรือยกเลิกรูปเดิมก่อนส่งรูปใหม่"
-        else:
-            body_text = (
-                "รูปนี้ยังไม่ถูกบันทึกเป็นสลิปครับ\n\n"
-                "หากต้องการส่งสลิป ให้พิมพ์คำสั่ง “ชำระค่างวด” แล้วพิมพ์ “ส่งสลิป” "
-                "หลังส่งรูป ระบบจะขอให้ยืนยันก่อนบันทึก"
-            )
-        flex_msg = build_flex_message_ui("🚫 ยังไม่ได้อยู่ในขั้นตอนส่งสลิป", body_text, color="#fd7e14")
-        line_bot_api.reply_message(event.reply_token, flex_msg)
+        print(f"[SLIP-GUARD] ignored image outside slip flow | user={user_id} | message_id={message_id}")
         return
 
     pending_payload = get_state_payload(user_state)
     pending_payload['image_message_id'] = message_id
-    if not set_user_state(
+    if not transition_user_state(
         user_id,
+        STATE_AWAIT_SLIP,
         STATE_CONFIRM_SLIP,
         payload=json.dumps(pending_payload, ensure_ascii=False),
         ttl_minutes=min(SLIP_STATE_TTL_MINUTES, 10)
@@ -875,7 +903,7 @@ def handle_confirm_slip_request(user_id, reply_token):
         return
 
     payload = get_state_payload(user_state)
-    message_id = payload.pop('image_message_id', None)
+    message_id = payload.get('image_message_id')
     if not message_id:
         clear_user_state(user_id)
         flex_msg = build_flex_message_ui(
@@ -887,11 +915,16 @@ def handle_confirm_slip_request(user_id, reply_token):
         return
 
     serialized_payload = json.dumps(payload, ensure_ascii=False)
-    if not set_user_state(user_id, STATE_AWAIT_SLIP, payload=serialized_payload):
+    if not transition_user_state(
+        user_id,
+        STATE_CONFIRM_SLIP,
+        'processing_slip',
+        payload=serialized_payload
+    ):
         flex_msg = build_flex_message_ui(
-            "⚠️ ไม่สามารถยืนยันรูปได้",
-            "ระบบไม่สามารถบันทึกสถานะยืนยันได้ กรุณาลองใหม่อีกครั้ง",
-            color="#dc3545"
+            "ℹ️ รายการนี้กำลังดำเนินการ",
+            "รูปนี้ถูกรับไปดำเนินการแล้ว หรือสถานะเปลี่ยนไป กรุณารอสักครู่ก่อนลองอีกครั้ง",
+            color="#6c757d"
         )
         line_bot_api.reply_message(reply_token, flex_msg)
         return
@@ -901,18 +934,29 @@ def handle_confirm_slip_request(user_id, reply_token):
         message=SimpleNamespace(id=message_id),
         reply_token=reply_token
     )
-    process_confirmed_slip_image(event, {'state': STATE_AWAIT_SLIP, 'payload': serialized_payload})
+    process_confirmed_slip_image(event, {'state': 'processing_slip', 'payload': serialized_payload})
 
 
 def process_confirmed_slip_image(event, user_state):
     """ ประมวลผลเฉพาะรูปที่ผู้ใช้ยืนยันแล้ว """
     user_id = event.source.user_id
     message_id = event.message.id
+    state_payload = get_state_payload(user_state)
+
+    def restore_confirmation_state():
+        transition_user_state(
+            user_id,
+            'processing_slip',
+            STATE_CONFIRM_SLIP,
+            payload=json.dumps(state_payload, ensure_ascii=False),
+            ttl_minutes=min(SLIP_STATE_TTL_MINUTES, 10)
+        )
 
     try:
         image_content = line_bot_api.get_message_content(message_id)
     except Exception as e:
         print(f"Error downloading LINE image content: {e}")
+        restore_confirmation_state()
         flex_msg = build_flex_message_ui("⚠️ ไม่สามารถอ่านรูปได้", "ไม่สามารถดาวน์โหลดรูปที่คุณส่งมาได้ กรุณาส่งรูปสลิปอีกครั้งครับ", color="#dc3545")
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
@@ -921,11 +965,13 @@ def process_confirmed_slip_image(event, user_state):
         conn = get_db()
     except Exception as e:
         print(f"DB Error on handle_image_message: {e}")
+        restore_confirmation_state()
         flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล", color="#dc3545")
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
     cursor = conn.cursor()
+    slip_saved = False
     try:
         cursor.execute(
             "SELECT * FROM contracts WHERE line_user_id = %s AND status IN ('active', 'overdue_1', 'overdue_2') ORDER BY id DESC LIMIT 1",
@@ -996,6 +1042,8 @@ def process_confirmed_slip_image(event, user_state):
         slip_row = cursor.fetchone()
         slip_id = slip_row['id']
         conn.commit()
+        slip_saved = True
+        clear_user_state(user_id)
 
         # ตอบกลับลูกค้าว่าได้รับสลิปแล้ว
         amount_text = f"{slip_amount:,.2f} บาท" if slip_amount else "-"
@@ -1015,9 +1063,6 @@ def process_confirmed_slip_image(event, user_state):
         )
         line_bot_api.reply_message(event.reply_token, flex_reply)
 
-        # รับรูปไปแล้ว -> ปิดสถานะรอส่งสลิป (รูปถัดไปต้องกดปุ่มอัปโหลดสลิปใหม่ทุกครั้ง)
-        clear_user_state(user_id)
-
         # แจ้งเตือนผู้ดูแลระบบทาง LINE (ใช้รูปแบบเดียวกับการแจ้งเตือนปิดยอดก่อนกำหนด)
         print(
             f"[ADMIN NOTIFICATION] 🧾 ลูกค้าส่งสลิปการโอนเงิน! สัญญาเลขที่: {contract['contract_number']} | "
@@ -1029,7 +1074,14 @@ def process_confirmed_slip_image(event, user_state):
     except Exception as e:
         conn.rollback()
         print(f"Error handling slip image: {e}")
-        flex_msg = build_flex_message_ui("⚠️ ข้อผิดพลาด", "เกิดข้อผิดพลาดในการบันทึกสลิป กรุณาส่งรูปใหม่อีกครั้งหรือติดต่อทางร้านครับ", color="#dc3545")
+        if not slip_saved:
+            restore_confirmation_state()
+        flex_msg = build_flex_message_ui(
+            "⚠️ ข้อผิดพลาด",
+            "เกิดข้อผิดพลาดในการบันทึกสลิป กรุณาลองยืนยันอีกครั้งหรือติดต่อทางร้านครับ"
+            if not slip_saved else "บันทึกสลิปแล้ว แต่ไม่สามารถส่งข้อความยืนยันได้ กรุณาตรวจสอบรายการในระบบ",
+            color="#dc3545"
+        )
         try:
             line_bot_api.reply_message(event.reply_token, flex_msg)
         except Exception as reply_err:
@@ -1085,9 +1137,12 @@ def notify_admin_early_close(user_id, trigger_text):
             cursor.execute("""
                 UPDATE contracts 
                 SET requested_early_close = TRUE, early_close_requested_at = %s 
-                WHERE id = %s
+                WHERE id = %s AND requested_early_close IS NOT TRUE
             """, (now_time, contract['id']))
+            newly_requested = cursor.rowcount == 1
             conn.commit()
+            if not newly_requested:
+                return
 
             cursor.execute("SELECT * FROM payments WHERE contract_id = %s ORDER BY installment_no ASC", (contract['id'],))
             payments = cursor.fetchall()

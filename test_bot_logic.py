@@ -81,7 +81,7 @@ check(
 
 print("\n=== 7. ฟังก์ชันสำคัญถูกต้องครบ ===")
 required = ["set_user_state", "get_user_state", "clear_user_state", "get_active_contract",
-            "get_state_installment_no", "run_command",
+            "transition_user_state", "get_state_installment_no", "run_command",
             "handle_upload_slip_request", "handle_cancel_pending", "handle_confirm_slip_request",
             "process_confirmed_slip_image", "send_payment_qr_next",
             "handle_postback_event", "handle_follow_event", "build_cmd", "parse_cmd"]
@@ -90,17 +90,22 @@ for fn in required:
 
 print("\n=== 8. รูปภาพต้องอยู่ในขั้นตอนและยืนยันก่อนบันทึก ===")
 original_get_user_state = app.get_user_state
-original_set_user_state = app.set_user_state
+original_transition_user_state = app.transition_user_state
 original_reply_message = app.line_bot_api.reply_message
 original_get_message_content = app.line_bot_api.get_message_content
 saved_state = {}
 replies = []
 download_attempts = []
 app.get_user_state = lambda user_id: {"state": app.STATE_AWAIT_SLIP, "payload": '{"installment_no":2,"contract_id":7}'}
-def capture_state(user_id, state, payload=None, ttl_minutes=None):
-    saved_state.update({"state": state, "payload": payload, "ttl_minutes": ttl_minutes})
+def capture_state(user_id, expected_state, state, payload=None, ttl_minutes=None):
+    saved_state.update({
+        "previous_state": expected_state,
+        "state": state,
+        "payload": payload,
+        "ttl_minutes": ttl_minutes
+    })
     return True
-app.set_user_state = capture_state
+app.transition_user_state = capture_state
 app.line_bot_api.reply_message = lambda reply_token, message: replies.append((reply_token, message))
 app.line_bot_api.get_message_content = lambda message_id: download_attempts.append(message_id)
 image_event = SimpleNamespace(
@@ -109,7 +114,11 @@ image_event = SimpleNamespace(
     reply_token="image-reply"
 )
 app.handle_image_message(image_event)
-check("เมื่อได้รับรูปให้บันทึกสถานะรอยืนยันเท่านั้น", saved_state.get("state") == app.STATE_CONFIRM_SLIP)
+check("เมื่อได้รับรูปให้เปลี่ยนสถานะเป็นรอยืนยันเท่านั้น",
+      saved_state.get("previous_state") == app.STATE_AWAIT_SLIP
+      and saved_state.get("state") == app.STATE_CONFIRM_SLIP)
+check("อัปเดตสถานะแบบมีเงื่อนไขเพื่อกันอีเวนต์ซ้ำ",
+      saved_state.get("previous_state") == app.STATE_AWAIT_SLIP)
 check("ผูก message ID รูปไว้กับสถานะยืนยัน",
       app.get_state_payload({"payload": saved_state.get("payload")}).get("image_message_id") == "image-test")
 check("รูปยังไม่ถูกดาวน์โหลด/บันทึกก่อนยืนยัน", not download_attempts)
@@ -121,7 +130,7 @@ app.get_user_state = lambda user_id: None
 app.handle_image_message(image_event)
 check("รูปที่ไม่มีคำสั่งเริ่มส่งสลิปไม่เปลี่ยนสถานะ", not saved_state)
 check("รูปที่ไม่มีคำสั่งไม่ถูกดาวน์โหลด", not download_attempts)
-check("แจ้งลูกค้าว่ารูปยังไม่ถูกบันทึก", len(replies) == 1)
+check("รูปที่ไม่ได้อยู่ในขั้นตอนส่งสลิปไม่ส่งข้อความแจ้งเตือน", not replies)
 
 saved_state.clear()
 replies.clear()
@@ -131,7 +140,7 @@ app.get_user_state = lambda user_id: {
 }
 app.handle_image_message(image_event)
 check("รูปใหม่ไม่แทนที่รูปที่กำลังรอยืนยัน", not saved_state and not download_attempts)
-check("แจ้งให้ยืนยันหรือยกเลิกรูปเดิมก่อน", len(replies) == 1)
+check("รูปซ้ำระหว่างรอยืนยันถูกเพิกเฉย", not replies)
 
 saved_state.clear()
 replies.clear()
@@ -143,16 +152,24 @@ processed_images = []
 original_process_confirmed_slip_image = app.process_confirmed_slip_image
 app.process_confirmed_slip_image = lambda event, state: processed_images.append((event, state))
 app.handle_confirm_slip_request("U-test", "confirm-reply")
-check("ปุ่มยืนยันเปลี่ยนสถานะกลับสู่การบันทึกสลิป",
-      saved_state.get("state") == app.STATE_AWAIT_SLIP)
+check("ปุ่มยืนยันใช้ transition แบบ atomic เข้าสถานะกำลังบันทึก",
+      saved_state.get("previous_state") == app.STATE_CONFIRM_SLIP
+      and saved_state.get("state") == "processing_slip")
 check("ประมวลผลเฉพาะ message ID ที่รอยืนยัน",
       len(processed_images) == 1 and processed_images[0][0].message.id == "confirmed-image")
-check("ข้อมูลยืนยันไม่ปน message ID เข้ากับข้อมูลค่างวด",
-      app.get_state_payload(processed_images[0][1]).get("image_message_id") is None)
+check("เก็บ message ID ไว้ระหว่างประมวลผลเพื่อรองรับการกู้คืน",
+      app.get_state_payload(processed_images[0][1]).get("image_message_id") == "confirmed-image")
+
+saved_state.clear()
+replies.clear()
+app.transition_user_state = lambda *args, **kwargs: False
+app.handle_confirm_slip_request("U-test", "duplicate-confirm")
+check("ป้องกันการยืนยันซ้ำด้วย state transition แบบ atomic",
+      len(processed_images) == 1 and not saved_state and len(replies) == 1)
 app.process_confirmed_slip_image = original_process_confirmed_slip_image
 
 app.get_user_state = original_get_user_state
-app.set_user_state = original_set_user_state
+app.transition_user_state = original_transition_user_state
 app.line_bot_api.reply_message = original_reply_message
 app.line_bot_api.get_message_content = original_get_message_content
 

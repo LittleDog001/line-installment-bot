@@ -239,6 +239,19 @@
             background: transparent;
         }
         .admin-toast-close:hover { color: #fff; }
+        .admin-confirm-icon {
+            display: grid;
+            width: 52px;
+            height: 52px;
+            margin: 0 auto 14px;
+            place-items: center;
+            color: #5368e8;
+            border-radius: 17px;
+            background: #eef0ff;
+            font-size: 1.2rem;
+        }
+        .admin-confirm-modal .modal-content { border: 0; box-shadow: 0 24px 70px rgba(20, 32, 62, 0.24); }
+        .admin-confirm-modal .modal-body { padding: 30px 28px 24px; }
         #addContractSubmitButton { position: relative; min-height: 46px; }
         #addContractSubmitButton .save-spinner { display: none; }
         #addContractSubmitButton.is-loading .save-spinner { display: inline-block; }
@@ -879,6 +892,22 @@
         </div>
     </div>
 
+    <div class="modal fade admin-confirm-modal" id="adminConfirmModal" tabindex="-1" aria-labelledby="adminConfirmTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content">
+                <div class="modal-body text-center">
+                    <div class="admin-confirm-icon"><i id="adminConfirmIcon" class="fa-solid fa-circle-question"></i></div>
+                    <h5 class="fw-bold mb-2" id="adminConfirmTitle">ยืนยันการทำรายการ</h5>
+                    <p class="text-muted mb-4" id="adminConfirmMessage"></p>
+                    <div class="d-flex justify-content-center gap-2">
+                        <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">ยกเลิก</button>
+                        <button type="button" class="btn btn-primary px-4" id="adminConfirmAccept">ยืนยัน</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="admin-toast-container" aria-live="polite" aria-atomic="true">
         <div id="adminToast" class="admin-toast" role="status">
             <span class="admin-toast-icon"><i id="adminToastIcon" class="fa-solid fa-check"></i></span>
@@ -911,6 +940,8 @@
         let currentSlipFilter = 'pending';
         let slipRefreshTimer = null;
         let adminToastTimer = null;
+        let activeAdminConfirmation = null;
+        const pendingAdminMutations = new Map();
 
         const THAI_MONTHS = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
 
@@ -954,12 +985,13 @@
             animatedElements.forEach(element => observer.observe(element));
         }
 
-        function showAdminToast(message, type = "success") {
+        function showAdminToast(message, type) {
             const toast = document.getElementById("adminToast");
             const messageElement = document.getElementById("adminToastMessage");
             const icon = document.getElementById("adminToastIcon");
             if (!toast || !messageElement || !icon) return;
 
+            type = type || (/ข้อผิดพลาด|เกิดข้อผิดพลาด|ไม่สามารถ|กรุณา/.test(String(message)) ? "error" : "success");
             const icons = {
                 success: "fa-check",
                 error: "fa-triangle-exclamation",
@@ -975,10 +1007,77 @@
             adminToastTimer = window.setTimeout(hideAdminToast, 5000);
         }
 
+        function confirmAdminAction(message, options = {}) {
+            if (activeAdminConfirmation) return Promise.resolve(false);
+
+            const modalElement = document.getElementById("adminConfirmModal");
+            const title = document.getElementById("adminConfirmTitle");
+            const messageElement = document.getElementById("adminConfirmMessage");
+            const acceptButton = document.getElementById("adminConfirmAccept");
+            const icon = document.getElementById("adminConfirmIcon");
+            const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+
+            title.textContent = options.title || "ยืนยันการทำรายการ";
+            messageElement.textContent = message;
+            acceptButton.textContent = options.confirmLabel || "ยืนยัน";
+            acceptButton.className = `btn ${options.danger ? "btn-danger" : "btn-primary"} px-4`;
+            icon.className = `fa-solid ${options.danger ? "fa-triangle-exclamation" : "fa-circle-question"}`;
+            acceptButton.disabled = false;
+
+            return new Promise(resolve => {
+                let settled = false;
+                const cleanup = () => {
+                    acceptButton.removeEventListener("click", accept);
+                    modalElement.removeEventListener("hidden.bs.modal", dismiss);
+                    activeAdminConfirmation = null;
+                };
+                const accept = () => {
+                    if (settled) return;
+                    settled = true;
+                    acceptButton.disabled = true;
+                    resolve(true);
+                    modal.hide();
+                };
+                const dismiss = () => {
+                    if (!settled) {
+                        settled = true;
+                        resolve(false);
+                    }
+                    cleanup();
+                };
+
+                activeAdminConfirmation = true;
+                acceptButton.addEventListener("click", accept, { once: true });
+                modalElement.addEventListener("hidden.bs.modal", dismiss, { once: true });
+                modal.show();
+            });
+        }
+
         function hideAdminToast() {
             const toast = document.getElementById("adminToast");
             if (toast) toast.classList.remove("is-visible");
             window.clearTimeout(adminToastTimer);
+        }
+
+        async function adminFetch(url, options = {}) {
+            const method = (options.method || "GET").toUpperCase();
+            if (method === "GET" || method === "HEAD") {
+                return window.fetch(url, options);
+            }
+
+            const key = `${method}:${url}`;
+            const pending = pendingAdminMutations.get(key);
+            if (pending) return pending.then(response => response.clone());
+
+            const request = window.fetch(url, options).then(response => response.clone());
+            pendingAdminMutations.set(key, request);
+            try {
+                return await request.then(response => response.clone());
+            } finally {
+                if (pendingAdminMutations.get(key) === request) {
+                    pendingAdminMutations.delete(key);
+                }
+            }
         }
 
         function toggleCalcType() {
@@ -996,7 +1095,7 @@
 
         async function loadContractsData() {
             try {
-                const res = await fetch("/admin/api/contracts");
+                const res = await adminFetch("/admin/api/contracts");
                 if (!res.ok) throw new Error("Failed to load contracts");
                 contractsData = await res.json();
                 renderDashboardStats();
@@ -1202,7 +1301,7 @@
 
         async function loadSlipsData(silent = false) {
             try {
-                const res = await fetch("/admin/api/slips");
+                const res = await adminFetch("/admin/api/slips");
                 if (!res.ok) throw new Error("Failed to load slips");
                 const data = await res.json();
 
@@ -1333,7 +1432,7 @@
         function openSlipModal(slipId) {
             const slip = slipsData.find(s => s.id === slipId);
             if (!slip) {
-                alert("ไม่พบข้อมูลสลิปนี้");
+                showAdminToast("ไม่พบข้อมูลสลิปนี้");
                 return;
             }
 
@@ -1430,18 +1529,25 @@
 
             if (action === 'reject') {
                 const note = adminNote || "ข้อมูลในสลิปไม่ชัดเจน / ไม่ตรงกับยอดที่ค้างชำระ";
-                if (!confirm(`ยืนยันการไม่อนุมัติสลิปนี้ใช่หรือไม่?\n\nเหตุผลที่จะแจ้งลูกค้า: ${note}`)) return;
+                if (!await confirmAdminAction(`ยืนยันการไม่อนุมัติสลิปนี้ใช่หรือไม่?\n\nเหตุผลที่จะแจ้งลูกค้า: ${note}`, {
+                    title: "ยืนยันการไม่อนุมัติสลิป",
+                    confirmLabel: "ไม่อนุมัติ",
+                    danger: true
+                })) return;
             } else {
                 const confirmText = slip.payment_type === 'early_close' && installmentValue === 'early_close'
                     ? "ยืนยันอนุมัติสลิปและปิดยอดสัญญา โดยบันทึกงวดคงเหลือทั้งหมดว่าชำระแล้ว ใช่หรือไม่?"
                     : installmentValue
                         ? `ยืนยันอนุมัติสลิปและบันทึกว่าชำระงวดที่ ${installmentValue} ใช่หรือไม่?`
                         : "ยืนยันอนุมัติสลิปนี้ (โดยไม่บันทึกว่าชำระแล้ว) ใช่หรือไม่?";
-                if (!confirm(confirmText)) return;
+                if (!await confirmAdminAction(confirmText, {
+                    title: "ยืนยันการอนุมัติสลิป",
+                    confirmLabel: "อนุมัติและบันทึก"
+                })) return;
             }
 
             try {
-                const res = await fetch(`/admin/api/slips/${slipId}/review`, {
+                const res = await adminFetch(`/admin/api/slips/${slipId}/review`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -1454,15 +1560,15 @@
                 const data = await res.json();
 
                 if (res.ok) {
-                    alert(data.message || "บันทึกผลการตรวจสอบสลิปเรียบร้อยแล้ว");
+                    showAdminToast(data.message || "บันทึกผลการตรวจสอบสลิปเรียบร้อยแล้ว");
                     bootstrap.Modal.getInstance(document.getElementById("slipModal"))?.hide();
                     await loadSlipsData();
                     await loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + (data.error || "ไม่สามารถบันทึกผลได้"));
+                    showAdminToast("ข้อผิดพลาด: " + (data.error || "ไม่สามารถบันทึกผลได้"));
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
+                showAdminToast("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
             }
         }
 
@@ -1578,6 +1684,10 @@
             e.preventDefault();
             const submitButton = document.getElementById("addContractSubmitButton");
             if (submitButton.disabled) return;
+            if (!await confirmAdminAction("ตรวจสอบข้อมูลสัญญาเรียบร้อยแล้ว และต้องการบันทึกสัญญาใหม่ใช่หรือไม่?", {
+                title: "ยืนยันบันทึกสัญญา",
+                confirmLabel: "บันทึกสัญญา"
+            })) return;
             submitButton.disabled = true;
             submitButton.classList.add("is-loading");
             submitButton.setAttribute("aria-busy", "true");
@@ -1602,7 +1712,7 @@
             }
 
             try {
-                const res = await fetch("/admin/contract/create", { method: "POST", body: formData });
+                const res = await adminFetch("/admin/contract/create", { method: "POST", body: formData });
                 if (res.ok) {
                     showAdminToast("บันทึกสร้างสัญญาสำเร็จเรียบร้อยแล้ว", "success");
                     document.getElementById("addContractForm").reset();
@@ -1623,7 +1733,7 @@
 
         async function openManageModal(contractId) {
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}`);
+                const res = await adminFetch(`/admin/api/contracts/${contractId}`);
                 if (!res.ok) throw new Error("Contract not found");
                 currentContract = await res.json();
 
@@ -1673,114 +1783,131 @@
                 }
                 modal.show();
             } catch (err) {
-                alert("ไม่สามารถโหลดข้อมูลสัญญาได้");
+                showAdminToast("ไม่สามารถโหลดข้อมูลสัญญาได้");
             }
         }
 
         async function payNextInstallment() {
             if (!currentContract) return;
             try {
-                const res = await fetch(`/admin/api/contracts/${currentContract.id}/pay`, { method: "POST" });
+                const res = await adminFetch(`/admin/api/contracts/${currentContract.id}/pay`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     openManageModal(currentContract.id);
                     loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการบันทึกการชำระเงิน");
+                showAdminToast("เกิดข้อผิดพลาดในการบันทึกการชำระเงิน");
             }
         }
 
         async function paySpecificInstallment(contractId, installmentNo) {
-            if (!confirm(`ยืนยันการอนุมัติรับชำระเงินงวดที่ ${installmentNo} ใช่หรือไม่?`)) return;
+            if (!await confirmAdminAction(`ยืนยันการอนุมัติรับชำระเงินงวดที่ ${installmentNo} ใช่หรือไม่?`, {
+                title: "ยืนยันรับชำระเงิน",
+                confirmLabel: "บันทึกการชำระ"
+            })) return;
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}/pay`, {
+                const res = await adminFetch(`/admin/api/contracts/${contractId}/pay`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ installment_no: installmentNo })
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการชำระเงิน");
+                showAdminToast("เกิดข้อผิดพลาดในการชำระเงิน");
             }
         }
 
         async function unpayLastInstallment() {
             if (!currentContract) return;
-            if (!confirm("คุณต้องการยกเลิกการชำระเงินในงวดล่าสุดใช่หรือไม่?")) return;
+            if (!await confirmAdminAction("คุณต้องการยกเลิกการชำระเงินในงวดล่าสุดใช่หรือไม่?", {
+                title: "ยกเลิกการชำระเงิน",
+                confirmLabel: "ยกเลิกการชำระ",
+                danger: true
+            })) return;
 
             try {
-                const res = await fetch(`/admin/api/contracts/${currentContract.id}/unpay`, { method: "POST" });
+                const res = await adminFetch(`/admin/api/contracts/${currentContract.id}/unpay`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     openManageModal(currentContract.id);
                     loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการยกเลิกการชำระเงิน");
+                showAdminToast("เกิดข้อผิดพลาดในการยกเลิกการชำระเงิน");
             }
         }
 
         async function closeEarlyContract() {
             if (!currentContract) return;
-            if (!confirm("ยืนยันการบันทึกปิดยอดสัญญาก่อนกำหนดพร้อมส่วนลดใช่หรือไม่?")) return;
+            if (!await confirmAdminAction("ยืนยันการบันทึกปิดยอดสัญญาก่อนกำหนดพร้อมส่วนลดใช่หรือไม่?", {
+                title: "ยืนยันปิดยอดสัญญา",
+                confirmLabel: "ปิดยอดและบันทึก"
+            })) return;
 
             try {
-                const res = await fetch(`/admin/api/contracts/${currentContract.id}/close_early`, { method: "POST" });
+                const res = await adminFetch(`/admin/api/contracts/${currentContract.id}/close_early`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     openManageModal(currentContract.id);
                     loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการปิดยอด");
+                showAdminToast("เกิดข้อผิดพลาดในการปิดยอด");
             }
         }
 
         async function closeEarlyContractDirect(contractId) {
-            if (!confirm("ยืนยันอนุมัติการปิดยอดสัญญาใช่หรือไม่?")) return;
+            if (!await confirmAdminAction("ยืนยันอนุมัติการปิดยอดสัญญาใช่หรือไม่?", {
+                title: "อนุมัติปิดยอดสัญญา",
+                confirmLabel: "อนุมัติปิดยอด"
+            })) return;
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}/close_early`, { method: "POST" });
+                const res = await adminFetch(`/admin/api/contracts/${contractId}/close_early`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการปิดยอด");
+                showAdminToast("เกิดข้อผิดพลาดในการปิดยอด");
             }
         }
 
         async function rejectEarlyClose(contractId) {
-            if (!confirm("ยืนยันปฏิเสธการขอปิดยอดสัญญาใช่หรือไม่?")) return;
+            if (!await confirmAdminAction("ยืนยันปฏิเสธการขอปิดยอดสัญญาใช่หรือไม่?", {
+                title: "ปฏิเสธคำขอปิดยอด",
+                confirmLabel: "ปฏิเสธคำขอ",
+                danger: true
+            })) return;
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}/reject_early_close`, { method: "POST" });
+                const res = await adminFetch(`/admin/api/contracts/${contractId}/reject_early_close`, { method: "POST" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการปฏิเสธการปิดยอด");
+                showAdminToast("เกิดข้อผิดพลาดในการปฏิเสธการปิดยอด");
             }
         }
 
@@ -1788,31 +1915,35 @@
             if (!currentContract) return;
             const message = document.getElementById("customNotificationText").value.trim();
             if (!message) {
-                alert("กรุณาระบุข้อความที่ต้องการส่ง");
+                showAdminToast("กรุณาระบุข้อความที่ต้องการส่ง");
                 return;
             }
+            if (!await confirmAdminAction("ยืนยันส่งข้อความนี้ให้ลูกค้าผ่าน LINE ใช่หรือไม่?", {
+                title: "ยืนยันส่งข้อความ",
+                confirmLabel: "ส่งข้อความ"
+            })) return;
 
             try {
-                const res = await fetch(`/admin/api/contracts/${currentContract.id}/send_custom_message`, {
+                const res = await adminFetch(`/admin/api/contracts/${currentContract.id}/send_custom_message`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ message })
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     document.getElementById("customNotificationText").value = "";
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการส่งข้อความ");
+                showAdminToast("เกิดข้อผิดพลาดในการส่งข้อความ");
             }
         }
 
         async function openEditModal(contractId) {
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}`);
+                const res = await adminFetch(`/admin/api/contracts/${contractId}`);
                 if (!res.ok) throw new Error("Contract not found");
                 const c = await res.json();
 
@@ -1830,12 +1961,16 @@
                 const modal = new bootstrap.Modal(document.getElementById("editContractModal"));
                 modal.show();
             } catch (err) {
-                alert("ไม่สามารถเปิดหน้าแก้ไขสัญญาได้");
+                showAdminToast("ไม่สามารถเปิดหน้าแก้ไขสัญญาได้");
             }
         }
 
         async function handleEditContract(e) {
             e.preventDefault();
+            if (!await confirmAdminAction("ยืนยันบันทึกการแก้ไขข้อมูลสัญญานี้ใช่หรือไม่?", {
+                title: "ยืนยันแก้ไขสัญญา",
+                confirmLabel: "บันทึกการแก้ไข"
+            })) return;
             const contractId = document.getElementById("edit_contract_id").value;
             const formData = new FormData();
             formData.append("customer_name", document.getElementById("edit_customer_name").value);
@@ -1854,34 +1989,38 @@
             }
 
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}`, { method: "PUT", body: formData });
+                const res = await adminFetch(`/admin/api/contracts/${contractId}`, { method: "PUT", body: formData });
                 if (res.ok) {
-                    alert("แก้ไขข้อมูลสัญญาเรียบร้อยแล้ว");
+                    showAdminToast("แก้ไขข้อมูลสัญญาเรียบร้อยแล้ว");
                     bootstrap.Modal.getInstance(document.getElementById("editContractModal")).hide();
                     loadContractsData();
                 } else {
                     const data = await res.json();
-                    alert("ข้อผิดพลาด: " + (data.error || "ไม่สามารถแก้ไขข้อมูลได้"));
+                    showAdminToast("ข้อผิดพลาด: " + (data.error || "ไม่สามารถแก้ไขข้อมูลได้"));
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
+                showAdminToast("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์");
             }
         }
 
         async function deleteContract(contractId) {
-            if (!confirm("คุณแน่ใจหรือว่าต้องการลบสัญญานี้? ข้อมูลบิลชำระเงินทั้งหมดจะถูกลบทันที")) return;
+            if (!await confirmAdminAction("คุณแน่ใจหรือว่าต้องการลบสัญญานี้? ข้อมูลบิลชำระเงินทั้งหมดจะถูกลบทันที", {
+                title: "ลบสัญญา",
+                confirmLabel: "ลบสัญญา",
+                danger: true
+            })) return;
 
             try {
-                const res = await fetch(`/admin/api/contracts/${contractId}`, { method: "DELETE" });
+                const res = await adminFetch(`/admin/api/contracts/${contractId}`, { method: "DELETE" });
                 const data = await res.json();
                 if (res.ok) {
-                    alert(data.message);
+                    showAdminToast(data.message);
                     loadContractsData();
                 } else {
-                    alert("ข้อผิดพลาด: " + data.error);
+                    showAdminToast("ข้อผิดพลาด: " + data.error);
                 }
             } catch (err) {
-                alert("เกิดข้อผิดพลาดในการลบสัญญา");
+                showAdminToast("เกิดข้อผิดพลาดในการลบสัญญา");
             }
         }
 
