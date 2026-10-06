@@ -11,13 +11,176 @@
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            color-scheme: light;
+            --admin-ink: #17233c;
+            --admin-muted: #77839a;
+            --admin-primary: #5368e8;
+            --admin-border: #e9edf5;
+            --admin-surface: #ffffff;
+        }
         * { font-family: 'Prompt', sans-serif; }
-        body { background-color: #f4f6f9; }
-        .navbar { background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%); }
-        .card-custom { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .card-stat { transition: transform 0.2s; }
-        .card-stat:hover { transform: translateY(-3px); }
-        .table-hover tbody tr:hover { background-color: rgba(13, 110, 253, 0.03); }
+        body {
+            min-height: 100vh;
+            color: var(--admin-ink);
+            background:
+                radial-gradient(ellipse at 92% 0%, rgba(83, 104, 232, 0.09), transparent 28rem),
+                #f5f7fc;
+        }
+        .navbar {
+            position: sticky;
+            top: 0;
+            z-index: 1020;
+            min-height: 68px;
+            background: rgba(25, 37, 71, 0.96);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .navbar-brand { letter-spacing: -0.3px; }
+        .navbar-brand i { color: #aebaff; }
+        .admin-user {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 13px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .dashboard-hero {
+            position: relative;
+            isolation: isolate;
+            overflow: hidden;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 24px;
+            min-height: 188px;
+            margin: 8px 0 26px;
+            padding: 32px 38px;
+            color: #fff;
+            border-radius: 24px;
+            background: linear-gradient(115deg, #273966 0%, #465bd0 58%, #7276ec 100%);
+            box-shadow: 0 18px 42px rgba(55, 69, 153, 0.2);
+        }
+        .dashboard-hero::before,
+        .dashboard-hero::after {
+            position: absolute;
+            z-index: -1;
+            content: "";
+            border: 1px solid rgba(255, 255, 255, 0.13);
+            border-radius: 50%;
+        }
+        .dashboard-hero::before {
+            width: 330px;
+            height: 330px;
+            top: -190px;
+            right: 12%;
+            box-shadow: 0 0 0 28px rgba(255, 255, 255, 0.035), 0 0 0 58px rgba(255, 255, 255, 0.025);
+        }
+        .dashboard-hero::after {
+            width: 230px;
+            height: 230px;
+            right: -60px;
+            bottom: -155px;
+        }
+        .hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            color: #d5dcff;
+            font-size: 0.78rem;
+            font-weight: 500;
+            letter-spacing: 1.1px;
+            text-transform: uppercase;
+        }
+        .hero-eyebrow span {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #7ce2bd;
+            box-shadow: 0 0 0 4px rgba(124, 226, 189, 0.16);
+        }
+        .dashboard-hero h1 {
+            margin: 0 0 7px;
+            font-size: clamp(1.45rem, 3vw, 2rem);
+            font-weight: 700;
+            letter-spacing: -0.6px;
+        }
+        .dashboard-hero p { margin: 0; color: #dce2ff; }
+        .hero-action {
+            flex: 0 0 auto;
+            padding: 11px 18px;
+            color: #3549b3;
+            border: 0;
+            border-radius: 12px;
+            background: #fff;
+            box-shadow: 0 7px 18px rgba(22, 31, 80, 0.18);
+            font-weight: 600;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .hero-action:hover {
+            color: #293d9f;
+            transform: translateY(-2px);
+            box-shadow: 0 11px 24px rgba(22, 31, 80, 0.24);
+        }
+        .col-md-2-4 { flex: 0 0 auto; width: 20%; }
+        .card-custom {
+            border: 1px solid rgba(226, 231, 242, 0.9);
+            border-radius: 18px;
+            background: var(--admin-surface);
+            box-shadow: 0 8px 24px rgba(29, 43, 79, 0.045);
+            transition: box-shadow 0.22s ease, transform 0.22s ease;
+        }
+        .card-custom:hover { box-shadow: 0 12px 30px rgba(29, 43, 79, 0.075); }
+        .card-stat {
+            position: relative;
+            overflow: hidden;
+            min-height: 116px;
+            transition: transform 0.22s ease, box-shadow 0.22s ease;
+        }
+        .card-stat:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 14px 30px rgba(29, 43, 79, 0.1);
+        }
+        .card-stat h3 { margin-top: 5px !important; letter-spacing: -0.6px; }
+        .card-stat > .d-flex > div:last-child {
+            width: 48px;
+            height: 48px;
+            display: grid;
+            place-items: center;
+            padding: 0 !important;
+            border-radius: 15px !important;
+        }
+        .table-responsive { border-radius: 12px; }
+        .table { --bs-table-bg: transparent; margin-bottom: 0; }
+        .table thead th {
+            padding-top: 13px;
+            padding-bottom: 13px;
+            color: #78849b;
+            border-bottom-color: var(--admin-border);
+            background-color: #f7f8fc;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .table tbody td { padding-top: 13px; padding-bottom: 13px; border-color: #edf0f6; }
+        .table-hover tbody tr { transition: background-color 0.18s ease; }
+        .table-hover tbody tr:hover { background-color: rgba(83, 104, 232, 0.045); }
+        .form-control, .form-select {
+            min-height: 42px;
+            border-color: #e1e6f0;
+            border-radius: 10px;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: #8795f2;
+            box-shadow: 0 0 0 3px rgba(83, 104, 232, 0.13);
+        }
+        .btn { border-radius: 9px; transition: transform 0.18s ease, box-shadow 0.18s ease; }
+        .btn:not(.btn-close):hover { transform: translateY(-1px); }
+        .modal-content { overflow: hidden; border-radius: 18px; }
+        .modal-header { padding: 17px 22px; }
+        .modal-body { background-color: #fff; }
         .badge-status-active { background-color: #d1e7dd; color: #0f5132; }
         .badge-status-overdue1 { background-color: #fff3cd; color: #664d03; }
         .badge-status-overdue2 { background-color: #ffe69c; color: #842029; }
@@ -25,6 +188,23 @@
         .badge-status-closed { background-color: #cfe2ff; color: #084298; }
         .badge-status-cancelled { background-color: #e2e3e5; color: #41464b; }
         .action-btn-group .btn { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
+        @media (max-width: 1199.98px) {
+            .col-md-2-4 { width: 33.333333%; }
+        }
+        @media (max-width: 767.98px) {
+            .navbar { position: relative; }
+            .container-fluid.px-4 { padding-right: 1rem !important; padding-left: 1rem !important; }
+            .dashboard-hero { align-items: flex-start; flex-direction: column; min-height: 0; padding: 26px 24px; }
+            .hero-action { width: 100%; }
+            .col-md-2-4 { width: 50%; }
+        }
+        @media (max-width: 399.98px) {
+            .col-md-2-4 { width: 100%; }
+            .dashboard-hero { padding: 23px 20px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+        }
     </style>
 </head>
 <body>
@@ -35,11 +215,22 @@
             <a class="navbar-brand fw-bold" href="#">
                 <i class="fa-solid fa-mobile-screen-button me-2"></i>ระบบผ่อนมือถือ (Admin Panel)
             </a>
-            <span class="text-white small"><i class="fa-solid fa-circle-user me-1"></i> ผู้ดูแลระบบ</span>
+            <span class="text-white small admin-user"><i class="fa-solid fa-circle-user"></i> ผู้ดูแลระบบ</span>
         </div>
     </nav>
 
     <div class="container-fluid px-4">
+
+        <section class="dashboard-hero" aria-labelledby="dashboardTitle">
+            <div>
+                <div class="hero-eyebrow"><span></span> Admin dashboard</div>
+                <h1 id="dashboardTitle">ภาพรวมการจัดการ</h1>
+                <p>ติดตามสัญญา ยอดชำระ และรายการที่ต้องดำเนินการได้ในที่เดียว</p>
+            </div>
+            <a class="btn hero-action" href="#addContractForm">
+                <i class="fa-solid fa-plus me-2"></i>เพิ่มสัญญาใหม่
+            </a>
+        </section>
 
         <!-- Stat Cards Summary Row 1 -->
         <div class="row g-3 mb-3">
