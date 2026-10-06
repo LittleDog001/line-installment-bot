@@ -5,8 +5,12 @@ import datetime
 import calendar
 import urllib.parse
 from types import SimpleNamespace
+from threading import Lock
 import psycopg2
 import werkzeug
+from psycopg2 import pool
+from psycopg2.extensions import TRANSACTION_STATUS_IDLE
+from psycopg2.pool import PoolError
 from psycopg2.extras import RealDictCursor
 from zoneinfo import ZoneInfo
 from flask import Flask, request, abort, render_template, jsonify, send_file
@@ -30,6 +34,8 @@ app = Flask(__name__)
 app.register_blueprint(admin_bp, url_prefix='/admin')
 
 TH_TZ = ZoneInfo('Asia/Bangkok')
+_db_pool = None
+_db_pool_lock = Lock()
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_SECRET')
@@ -114,12 +120,63 @@ def parse_cmd(text):
     return action, segments[1:]
 
 
+class PooledConnection:
+    """ รักษา API conn.close() เดิม แต่คืน connection เข้าสู่ pool เพื่อใช้ซ้ำ """
+    def __init__(self, connection_pool, connection):
+        self._pool = connection_pool
+        self._connection = connection
+        self._returned = False
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def close(self):
+        if self._returned:
+            return
+        self._returned = True
+        discard = bool(self._connection.closed)
+        if not discard:
+            try:
+                if self._connection.get_transaction_status() != TRANSACTION_STATUS_IDLE:
+                    self._connection.rollback()
+            except Exception as err:
+                print(f"Error resetting pooled database connection: {err}")
+                discard = True
+        try:
+            self._pool.putconn(self._connection, close=discard)
+        except Exception as err:
+            print(f"Error returning database connection to pool: {err}")
+            self._connection.close()
+
+
 def get_db():
+    global _db_pool
     db_url = os.environ.get('DATABASE_URL')
     if not db_url:
         raise ValueError("DATABASE_URL environment variable is missing")
-    conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
-    return conn
+
+    if _db_pool is None:
+        with _db_pool_lock:
+            if _db_pool is None:
+                max_connections = max(2, int(os.environ.get('DB_POOL_MAX_SIZE', '8')))
+                _db_pool = pool.ThreadedConnectionPool(
+                    1,
+                    max_connections,
+                    db_url,
+                    cursor_factory=RealDictCursor,
+                    connect_timeout=5
+                )
+
+    try:
+        connection = _db_pool.getconn()
+    except PoolError as err:
+        print(f"Database connection pool is full; using a temporary connection: {err}")
+        return psycopg2.connect(
+            db_url,
+            cursor_factory=RealDictCursor,
+            connect_timeout=5
+        )
+    return PooledConnection(_db_pool, connection)
 
 def init_db():
     db_url = os.environ.get('DATABASE_URL')
@@ -787,8 +844,8 @@ def run_command(action, args, user_id, reply_token):
             send_payment_qr_next(user_id, reply_token)
 
         elif action == CMD_EARLY_CLOSE:
-            notify_admin_early_close(user_id, "ปิดยอดก่อนกำหนด (เลือกจากปุ่มเมนู)")
             send_early_close_qr(user_id, reply_token)
+            notify_admin_early_close(user_id, "ปิดยอดก่อนกำหนด (เลือกจากปุ่มเมนู)")
 
         elif action == CMD_UPLOAD_SLIP:
             handle_upload_slip_request(user_id, reply_token, args)

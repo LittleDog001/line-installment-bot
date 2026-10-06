@@ -215,6 +215,73 @@ for text in ["สวัสดี", "#BOTMENU#status", "ชำระงวด", "
     check(f"ไม่เรียกคำสั่งสำหรับ: {text!r}", not received_commands)
 app.run_command = original_run_command
 
+print("\n=== 10. ใช้ connection ฐานข้อมูลซ้ำระหว่างคำสั่ง ===")
+class FakeConnection:
+    closed = 0
+    def __init__(self):
+        self.transaction_status = app.TRANSACTION_STATUS_IDLE
+        self.rollback_count = 0
+
+    def get_transaction_status(self):
+        return self.transaction_status
+
+    def rollback(self):
+        self.rollback_count += 1
+        self.transaction_status = app.TRANSACTION_STATUS_IDLE
+
+
+class FakePool:
+    def __init__(self, *args, **kwargs):
+        self.connection = FakeConnection()
+        self.returned = []
+
+    def getconn(self):
+        return self.connection
+
+    def putconn(self, connection, close=False):
+        self.returned.append((connection, close))
+
+
+original_pool = app._db_pool
+original_pool_factory = app.pool.ThreadedConnectionPool
+original_database_url = os.environ.get("DATABASE_URL")
+fake_pool = FakePool()
+app._db_pool = None
+app.pool.ThreadedConnectionPool = lambda *args, **kwargs: fake_pool
+os.environ["DATABASE_URL"] = "postgresql://test"
+try:
+    pooled_connection = app.get_db()
+    pooled_connection.close()
+    second_connection = app.get_db()
+    check("คืน connection เดิมกลับ pool เพื่อนำไปใช้ซ้ำ",
+          fake_pool.returned == [(fake_pool.connection, False)]
+          and second_connection._connection is fake_pool.connection)
+    second_connection._connection.transaction_status = 1
+    second_connection.close()
+    check("rollback transaction ค้างก่อนคืน connection",
+          fake_pool.connection.rollback_count == 1
+          and len(fake_pool.returned) == 2)
+finally:
+    app._db_pool = original_pool
+    app.pool.ThreadedConnectionPool = original_pool_factory
+    if original_database_url is None:
+        os.environ.pop("DATABASE_URL", None)
+    else:
+        os.environ["DATABASE_URL"] = original_database_url
+
+print("\n=== 11. ตอบลูกค้าก่อนส่งแจ้งเตือนปิดยอดให้แอดมิน ===")
+original_send_early_close_qr = app.send_early_close_qr
+original_notify_admin_early_close = app.notify_admin_early_close
+command_order = []
+app.send_early_close_qr = lambda user_id, reply_token: command_order.append("reply")
+app.notify_admin_early_close = lambda user_id, text: command_order.append("admin")
+try:
+    app.run_command(app.CMD_EARLY_CLOSE, [], "U-test", "reply-token")
+    check("ส่งคำตอบ LINE ก่อนงานแจ้งแอดมิน", command_order == ["reply", "admin"])
+finally:
+    app.send_early_close_qr = original_send_early_close_qr
+    app.notify_admin_early_close = original_notify_admin_early_close
+
 print("\n" + "=" * 50)
 print(f"ผ่าน {len(fails) == 0 and 'ทั้งหมด' or 'มีข้อผิดพลาด: ' + ', '.join(fails)}")
 print("=" * 50)
